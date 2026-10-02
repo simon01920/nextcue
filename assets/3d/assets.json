@@ -1,0 +1,76 @@
+{
+ "vhs_cassette": {
+  "faces": 49080,
+  "verts": 51316,
+  "quads": 45788,
+  "materials": [
+   "VHS_Window",
+   "VHS_Shell",
+   "VHS_ShellGloss",
+   "VHS_ScrewSlot",
+   "VHS_Screw",
+   "VHS_Tape",
+   "VHS_Hub",
+   "VHS_Flange",
+   "LABEL_TAPE_SPINE",
+   "VHS_PaperEdge",
+   "LABEL_FRONT"
+  ],
+  "bytes": 6802796,
+  "texture": 2048
+ },
+ "vhs_sleeve": {
+  "faces": 52420,
+  "verts": 54666,
+  "quads": 49120,
+  "materials": [
+   "COVER_BACK",
+   "LABEL_SPINE",
+   "COVER_ART",
+   "SLEEVE_PRINT_END",
+   "SLEEVE_BOARD",
+   "SLEEVE_EDGE",
+   "VHS_Window",
+   "VHS_Shell",
+   "VHS_ShellGloss",
+   "VHS_ScrewSlot",
+   "VHS_Screw",
+   "VHS_Tape",
+   "VHS_Hub",
+   "VHS_Flange",
+   "LABEL_TAPE_SPINE",
+   "VHS_PaperEdge",
+   "LABEL_FRONT"
+  ],
+  "bytes": 7948748,
+  "texture": 2048
+ },
+ "shelf_bay": {
+  "faces": 1069,
+  "verts": 1084,
+  "quads": 1051,
+  "materials": [
+   "Shelf_Plank_1",
+   "Shelf_Back_1",
+   "Shelf_Divider",
+   "Shelf_Rail",
+   "LABEL_SHELF_TAG"
+  ],
+  "bytes": 725012,
+  "texture": 2048
+ },
+ "dvd_case": {
+  "faces": 1770,
+  "verts": 1886,
+  "quads": 1750,
+  "materials": [
+   "OVERWRAP",
+   "SHELL",
+   "COVER_BACK",
+   "LABEL_SPINE",
+   "COVER_ART"
+  ],
+  "bytes": 427116,
+  "texture": 1024
+ }
+}
