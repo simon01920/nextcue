@@ -1,0 +1,25 @@
+{
+  "description": "v0 eject dialog (tap a favourite tape), captured for docs/AUDIT.md.",
+  "steps": [
+    {"viewport": {"width": 390, "height": 844, "dpr": 2}},
+    {"goto": "http://127.0.0.1:8199/"},
+    {"wait": 1500},
+    {"seed": {
+      "nextcue.onboarded": true,
+      "bingely.session": "{\"uid\":\"local-qa\",\"email\":\"qa@nextcue.app\",\"name\":\"QA\"}",
+      "bingely.local-qa.themeMode": 2,
+      "bingely.local-qa.favorites": ["series-81189", "series-121361", "series-305288", "series-79168", "series-73244", "series-279830", "series-176941"],
+      "bingely.local-qa.statuses": "{\"series-81189\":\"completed\",\"series-73244\":\"watching\"}"
+    }},
+    {"reload": true},
+    {"waitFlutter": 30000},
+    {"wait": 5000},
+    {"hash": "/profile"},
+    {"wait": 10000},
+    {"tap": [135, 520]},
+    {"wait": 450},
+    {"shot": "docs/audit/before-eject-mid.png"},
+    {"wait": 1800},
+    {"shot": "docs/audit/before-eject.png"}
+  ]
+}
