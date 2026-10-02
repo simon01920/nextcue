@@ -58,3 +58,4 @@ app.*.map.json
 /renders/_frames/
 # Local tooling scratch.
 /tools/**/node_modules/
+/renders/_preview/

@@ -53,7 +53,9 @@ def _uv_hero(face, co: Vector):
         return HERO["back"].uv((HW - x) / SLEEVE_W, v)
     if n.x < -0.9:                    # spine: seen from -X, right edge at the front
         return HERO["spine"].uv((HD - y) / SLEEVE_D, v)
-    return HERO["spine"].uv(0.5, v)   # ends (non-label)
+    # ends: the print wraps over the fold, so each end repeats the spine's
+    # outermost row of artwork across its depth
+    return HERO["spine"].uv(min(1.0, max(0.0, (HD - y) / SLEEVE_D)), 0.997 if z > 0 else 0.003)
 
 
 def _uv_spine(face, co: Vector):
@@ -67,7 +69,7 @@ def _uv_spine(face, co: Vector):
         return SPINE["front_strip"].uv(u, v)
     if n.y > 0.9:                     # back: not visible on the shelf
         return SPINE["spine"].uv(0.0, v)
-    return SPINE["spine"].uv(0.5, v)
+    return SPINE["spine"].uv(min(1.0, max(0.0, (HD - y) / SLEEVE_D)), 0.997 if z > 0 else 0.003)
 
 
 def build_mesh(seed: int = 7) -> bpy.types.Object:
@@ -134,6 +136,48 @@ def build_mesh(seed: int = 7) -> bpy.types.Object:
     return obj
 
 
+FILM_GAP = 0.3       # mm between board and film
+
+
+def build_film(seed: int = 3) -> bpy.types.Object:
+    """Shrink-wrap around the closed sleeve: a slightly oversized box whose
+    faces float off the board in shallow air pockets, tightest at the folds,
+    with softly rounded corners where the film was heat-shrunk."""
+    g = FILM_GAP
+    nx, ny, nz = 14, 5, 28
+    xs = [-HW - g + (SLEEVE_W + 2 * g) * i / nx for i in range(nx + 1)]
+    ys = [-HD - g + (SLEEVE_D + 2 * g) * i / ny for i in range(ny + 1)]
+    zs = [-HH - g + (SLEEVE_H + 2 * g) * i / nz for i in range(nz + 1)]
+    bm = geo.lattice_box(xs, ys, zs)
+    rnd = random.Random(seed)
+    phase = [rnd.uniform(0, math.tau) for _ in range(6)]
+    for v in bm.verts:
+        x, y, z = v.co
+        # distance from the nearest fold (edges are where the film is tight)
+        ex = 1 - abs(x) / (HW + g)
+        ey = 1 - abs(y) / (HD + g)
+        ez = 1 - abs(z) / (HH + g)
+        if abs(abs(y) - (HD + g)) < 1e-6:          # front/back faces
+            free = min(ex, ez) * 4.0
+            n = Vector((0, math.copysign(1, y), 0))
+        elif abs(abs(x) - (HW + g)) < 1e-6:        # spine / open side
+            free = min(ey, ez) * 4.0
+            n = Vector((math.copysign(1, x), 0, 0))
+        else:                                       # ends
+            free = min(ex, ey) * 4.0
+            n = Vector((0, 0, math.copysign(1, z)))
+        free = min(1.0, free)
+        pocket = 0.5 + 0.5 * math.sin(x * 0.11 + phase[0]) * math.sin(z * 0.07 + phase[1])
+        pocket += 0.3 * math.sin(x * 0.31 + z * 0.23 + phase[2])
+        v.co += n * free * max(0.0, pocket) * 0.45
+    bm.normal_update()
+    obj = geo.to_object(bm, "VHS_Film")
+    obj.scale = (MM, MM, MM)
+    geo.add_bevel(obj, 1.1, segments=3, angle_deg=40.0, profile=0.7, name="Shrunk")
+    obj.data.materials.append(mats.cached("SHRINK_FILM", lambda: mats.film("SHRINK_FILM")))
+    return obj
+
+
 def bake_uv(obj: bpy.types.Object) -> None:
     """Non-overlapping UVs for baking (applied after modifiers at export)."""
     mesh = obj.data
@@ -142,13 +186,25 @@ def bake_uv(obj: bpy.types.Object) -> None:
 
 
 def materials_dict() -> dict:
+    """Built once per scene; every sleeve instance shares the set."""
+    existing = bpy.data.materials.get("COVER_ART")
+    if existing is not None and "nc_sleeve_set" in existing:
+        return {k: bpy.data.materials[v] for k, v in existing["nc_sleeve_set"].items()}
+    built = _build_materials()
+    built["COVER_ART"]["nc_sleeve_set"] = {k: m.name for k, m in built.items()}
+    return built
+
+
+def _build_materials() -> dict:
     cover = mats.Print(ink_roughness=0.42, coat=0.55, coat_roughness=0.2, wear=0.6)
     return {
         "COVER_BACK": mats.label("COVER_BACK", cover),
         "LABEL_SPINE": mats.label("LABEL_SPINE", cover),
         "COVER_ART": mats.label("COVER_ART", cover),
-        "SLEEVE_PRINT_END": mats.plastic("SLEEVE_PRINT_END", mats.Plastic(
-            color=(0.012, 0.012, 0.014, 1.0), roughness=0.3, rough_var=0.12, scratch=0.6, seed=4.0)),
+        # ends carry the spine's edge colour (see _uv_*), more worn: they
+        # are what hands and shelves rub against
+        "SLEEVE_PRINT_END": mats.label("SLEEVE_PRINT_END", mats.Print(
+            ink_roughness=0.6, coat=0.4, coat_roughness=0.42, wear=1.0, dust=0.6)),
         "SLEEVE_BOARD": mats.matte("SLEEVE_BOARD", (0.60, 0.58, 0.54, 1.0), roughness=0.9, bump=0.15),
         "SLEEVE_EDGE": mats.matte("SLEEVE_EDGE", (0.42, 0.37, 0.30, 1.0), roughness=0.95, bump=0.3,
                                   bump_scale=4000.0),

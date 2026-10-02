@@ -17,6 +17,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import bpy  # noqa: E402
+from mathutils import Vector  # noqa: E402
 
 from nc import MM, paths  # noqa: E402
 from nc import mats, rig, scene  # noqa: E402
@@ -127,7 +128,73 @@ def preview_sleeve(args) -> None:
         log(f"rendered sleeve_{name}{tag} in {time.time() - t0:.1f}s")
 
 
-PREVIEWS = {"cassette": preview_cassette, "sleeve": preview_sleeve}
+def preview_shelf(args) -> None:
+    from assets import shelf, sleeve
+    sc = scene.reset()
+    _apply_sample()
+    scene.setup_cycles(sc, width=100, height=100, samples=96 if args.quick else 256, transparent=False)
+    rig.world_gradient(top=(0.01, 0.01, 0.011), bottom=(0.003, 0.003, 0.003))
+    m = shelf.materials_dict(seed=1.0)
+    bays = 2
+    for b in range(bays):
+        parts = shelf.build_bay(m if b == 0 else shelf.materials_dict(seed=2.0 + b),
+                                x_center=b * shelf.BAY_PITCH)
+        parts["above"].visible_camera = False
+    x0 = -shelf.BAY_PITCH / 2
+    x1 = x0 + bays * shelf.BAY_PITCH
+    shelf.build_rail(m, x0=x0, x1=x1)
+    shelf.lights(x0=x0, x1=x1)
+    # sleeve source mesh (hidden) + instances
+    sleeve.build(with_cassette=False)
+    src = bpy.data.objects["VHS_Sleeve"]
+    src.hide_render = True
+    film = sleeve.build_film()
+    film.hide_render = True
+    import random
+    rnd = random.Random(3)
+    n = 0
+    for b in range(bays):
+        count = shelf.SLOTS if b == 0 else 9
+        for i in range(count):
+            x = shelf.slot_x(i, b * shelf.BAY_PITCH)
+            pull = 16.0 if (b, i) == (0, 4) else rnd.choice((0.0, 1.4, 2.8, 4.2))
+            sealed = (b, i) in ((0, 7), (1, 2))
+            shelf.place_tape(src, x, pull=pull, yaw_deg=rnd.uniform(-0.25, 0.25), name=f"Tape{n}",
+                             extra=(film,) if sealed else ())
+            n += 1
+        if b == 1:
+            face = shelf.slot_x(count - 1, b * shelf.BAY_PITCH) + sleeve.HD
+            shelf.place_tape(src, shelf.lean_x(face, 9.0), lean_deg=9.0, name=f"Tape{n}")
+    mats.set_mode(mats.MODE_SHOWCASE)
+    if args.clay:
+        clay_override()
+    sc.camera = shelf.camera_for(x0, x1, shelf.ROW_BAND_LO, shelf.ROW_BAND_HI,
+                                 px_per_mm=1.6 if args.quick else 3.0)
+    out = paths.RENDERS / "_preview"
+    tag = "_clay" if args.clay else ""
+    t0 = time.time()
+    scene.render_still(out / f"shelf_row{tag}.png", color_mode="RGB")
+    log(f"rendered shelf_row{tag} in {time.time() - t0:.1f}s "
+        f"({sc.render.resolution_x}x{sc.render.resolution_y})")
+
+
+PREVIEWS = {"cassette": preview_cassette, "sleeve": preview_sleeve, "shelf": preview_shelf}
+
+
+# --------------------------------------------------------------------------
+# Build steps (default: all, in this order)
+# --------------------------------------------------------------------------
+
+def step_shelf_plates(args) -> None:
+    if args.no_plates:
+        return
+    from assets import shelf_plates
+    shelf_plates.render_all(args)
+
+
+STEPS = {
+    "shelf": step_shelf_plates,
+}
 
 
 def main() -> None:
@@ -139,7 +206,15 @@ def main() -> None:
             _load_sample(args)
             PREVIEWS[name](args)
         return
-    log("no build steps implemented yet")
+    names = args.only or list(STEPS)
+    unknown = [n for n in names if n not in STEPS]
+    if unknown:
+        raise SystemExit(f"unknown build step(s) {unknown}; known: {list(STEPS)}")
+    t0 = time.time()
+    for name in names:
+        log(f"step {name}")
+        STEPS[name](args)
+    log(f"done in {time.time() - t0:.0f}s")
 
 
 if __name__ == "__main__":

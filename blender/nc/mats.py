@@ -22,6 +22,8 @@ from dataclasses import dataclass
 
 import bpy
 
+from . import MM
+
 LABEL_UV_HERO = "UV_LABEL_HERO"
 LABEL_UV_SPINE = "UV_LABEL_SPINE"
 BAKE_UV = "UV_BAKE"
@@ -143,13 +145,19 @@ class Graph:
 
 
 def _new_material(name: str) -> tuple[bpy.types.Material, Graph]:
-    mat = bpy.data.materials.get(name)
-    if mat is not None:
-        bpy.data.materials.remove(mat)
+    # Never delete an existing material of the same name: objects built
+    # earlier may still use it. Callers that need one shared instance (or an
+    # exact name, e.g. GLB material slots) go through `cached`.
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     mat.node_tree.nodes.clear()
     return mat, Graph(mat.node_tree)
+
+
+def cached(name: str, factory) -> bpy.types.Material:
+    """Return the scene's material `name`, building it with factory() once."""
+    mat = bpy.data.materials.get(name)
+    return mat if mat is not None else factory()
 
 
 # --------------------------------------------------------------------------
@@ -202,17 +210,21 @@ def _camera_like(g: Graph):
 
 
 def _finish(g: Graph, beauty, *, label: bool, clear: bool = False, white=None, uv_maps=None,
-            bounce_color=(0.35, 0.35, 0.35, 1), showcase=None):
+            bounce_color=(0.35, 0.35, 0.35, 1), showcase=None, d_transmit: float = 1.0):
     """Wrap a beauty shader with the D/UV pass behaviour and connect output.
 
     clear=True marks transparent materials (windows, films): in the D and UV
-    passes they turn fully transparent so labels behind them still register.
+    passes they turn transparent so labels behind them still register. The
+    D pass is dimmed by d_transmit (what the film lets through); the UV pass
+    must stay exactly white or it would scale the coordinates.
     """
     mode, is_d, is_uv = _mode_sockets(g)
     cam = _camera_like(g)
     if clear:
         see_through = g.add("ShaderNodeBsdfTransparent").outputs[0]
-        m1 = g.mix_shader(is_d, beauty, see_through)
+        dimmed = g.add("ShaderNodeBsdfTransparent",
+                       inputs={"Color": (d_transmit, d_transmit, d_transmit, 1.0)}).outputs[0]
+        m1 = g.mix_shader(is_d, beauty, dimmed)
         m2 = g.mix_shader(is_uv, m1, see_through)
         out = g.add("ShaderNodeOutputMaterial")
         g.link(m2, out.inputs["Surface"])
@@ -257,7 +269,15 @@ def _finish(g: Graph, beauty, *, label: bool, clear: bool = False, white=None, u
 # --------------------------------------------------------------------------
 
 def _coords(g: Graph, space: str = "Object"):
-    return g.add("ShaderNodeTexCoord").outputs[space]
+    """Texture coordinates in metres. Every mesh is authored in millimetres
+    (object scale 0.001) and all pattern scales below are tuned in metres."""
+    out = g.add("ShaderNodeTexCoord").outputs[space]
+    if space != "Object":
+        return out
+    s = g.add("ShaderNodeVectorMath", operation="SCALE")
+    g.link(out, s.inputs[0])
+    s.inputs["Scale"].default_value = MM
+    return s.outputs[0]
 
 
 def _noise(g: Graph, vector, scale: float, detail: float = 4.0, rough: float = 0.55,
@@ -350,6 +370,44 @@ def clear_plastic(name: str, tint=(0.92, 0.94, 0.95, 1.0), roughness: float = 0.
     return mat
 
 
+def film(name: str, *, crinkle: float = 1.0, transmit: float = 0.93) -> bpy.types.Material:
+    """Shrink-wrap: a thin film is not a refracting slab, so the camera ray
+    passes straight through (Transparent BSDF) and only a Fresnel-weighted
+    glossy layer is added. Crinkles are sharp Voronoi creases plus soft
+    waviness, strongest near the heat-sealed ends (object |Z| large)."""
+    mat, g = _new_material(name)
+    co = _coords(g, "Object")
+    sep = g.add("ShaderNodeSeparateXYZ")
+    g.link(co, sep.inputs[0])
+    # ends of the sleeve sit at |z| ~ 95 mm in object space (metres * 1000)
+    end_w = g.math("POWER", g.math("MULTIPLY", g.math("ABSOLUTE", sep.outputs[2]), 1.0 / 0.0955, clamp=True), 10.0)
+    vor = g.add("ShaderNodeTexVoronoi", feature="DISTANCE_TO_EDGE", inputs={"Scale": 70.0})
+    warp = _noise(g, co, 60.0, 3.0, 0.5, distortion=1.2)
+    wmix = g.add("ShaderNodeMix", data_type="VECTOR")
+    wmix.inputs[0].default_value = 0.004
+    g.link(co, wmix.inputs[4])
+    g.link(warp.outputs["Color"], wmix.inputs[5])
+    g.link(wmix.outputs[1], vor.inputs["Vector"])
+    # soft-edged creases: a smooth ridge profile instead of a hard line
+    crease = g.math("POWER", g.math("SUBTRACT", 1.0, g.math("MULTIPLY", vor.outputs["Distance"], 3.0,
+                                                            clamp=True)), 3.0)
+    crease_w = g.math("MULTIPLY_ADD", end_w, 0.6, 0.1)
+    soft = _noise(g, co, 35.0, 2.0, 0.4)
+    height = g.math("MULTIPLY_ADD", g.math("MULTIPLY", crease, crease_w), crinkle,
+                    g.math("MULTIPLY", soft.outputs["Fac"], 0.6 * crinkle))
+    nrm = _bump(g, height, 0.12, 0.0002)
+    fres = g.add("ShaderNodeFresnel", inputs={"IOR": 1.5})
+    g.link(nrm, fres.inputs["Normal"])
+    gloss = g.add("ShaderNodeBsdfGlossy", inputs={"Roughness": 0.04, "Color": (1, 1, 1, 1)})
+    g.link(nrm, gloss.inputs["Normal"])
+    thru = g.add("ShaderNodeBsdfTransparent", inputs={"Color": (transmit, transmit, transmit, 1.0)})
+    # both film surfaces reflect: roughly double the single-surface Fresnel
+    f2 = g.math("MULTIPLY", fres.outputs[0], 1.8, clamp=True)
+    shaded = g.mix_shader(f2, thru.outputs[0], gloss.outputs[0])
+    _finish(g, shaded, label=False, clear=True, d_transmit=transmit)
+    return mat
+
+
 def tape_pack(name: str) -> bpy.types.Material:
     """Wound magnetic tape: dark brown oxide, glossy edges with concentric
     winding rings centred on each reel object's origin."""
@@ -417,6 +475,7 @@ class Print:
     coat: float = 0.55          # varnish/laminate weight (0 = bare paper)
     coat_roughness: float = 0.22
     wear: float = 0.5           # how much the coat scuffs off on edges
+    dust: float = 0.0           # dust settled on up-facing print (shelf tops)
     uv_hero: str = LABEL_UV_HERO
     uv_spine: str = LABEL_UV_SPINE
 
@@ -437,8 +496,28 @@ def label(name: str, p: Print = Print()) -> bpy.types.Material:
     coat_w = g.math("MULTIPLY", g.math("SUBTRACT", 1.0, scuff, clamp=True), p.coat)
     fiber = _noise(g, co, 2200.0, 3.0, 0.5)
     nrm = _bump(g, fiber.outputs["Fac"], 0.05, 0.00002)
+    ink = (0.0, 0.0, 0.0, 1.0)
+    rough = p.ink_roughness
+    white = None
+    if p.dust > 0:
+        # Dust is a layer over the print: the beauty plate gets grey fluff,
+        # and the D pass is dimmed by its coverage so the art shows less.
+        sepn = g.add("ShaderNodeSeparateXYZ")
+        g.link(geo.outputs["Normal"], sepn.inputs[0])
+        up = g.math("POWER", g.math("MAXIMUM", sepn.outputs[2], 0.0), 3.0)
+        dn = _noise(g, co, 220.0, 6.0, 0.7, w=5.0)
+        dust_mask = g.math("MULTIPLY", g.math("MULTIPLY", up, g.math("POWER", dn.outputs["Fac"], 1.8)),
+                           p.dust * 1.8, clamp=True)
+        ink = g.mix_color(dust_mask, (0.0, 0.0, 0.0, 1.0), (0.36, 0.34, 0.31, 1.0))
+        rough = g.math("MULTIPLY_ADD", dust_mask, 0.5, p.ink_roughness)
+        coat_w = g.math("MULTIPLY", coat_w, g.math("SUBTRACT", 1.0, dust_mask, clamp=True))
+        cover = g.math("SUBTRACT", 1.0, dust_mask, clamp=True)
+        white_col = g.add("ShaderNodeCombineColor")
+        for i in range(3):
+            g.link(cover, white_col.inputs[i])
+        white = g.add("ShaderNodeBsdfDiffuse", inputs={"Color": white_col.outputs[0]}).outputs[0]
     bsdf = g.add("ShaderNodeBsdfPrincipled", inputs={
-        "Base Color": (0.0, 0.0, 0.0, 1.0), "Roughness": p.ink_roughness,
+        "Base Color": ink, "Roughness": rough,
         "Specular IOR Level": 0.4, "Coat Weight": coat_w, "Coat Roughness": p.coat_roughness,
         "Coat IOR": 1.5, "Normal": nrm,
     })
@@ -452,7 +531,7 @@ def label(name: str, p: Print = Print()) -> bpy.types.Material:
         "Coat IOR": 1.5, "Normal": nrm,
     })
     _finish(g, bsdf.outputs[0], label=True, uv_maps={"hero": p.uv_hero, "spine": p.uv_spine},
-            showcase=show.outputs[0])
+            showcase=show.outputs[0], white=white)
     return mat
 
 

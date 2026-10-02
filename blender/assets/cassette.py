@@ -424,6 +424,18 @@ def build_labels(materials) -> list[bpy.types.Object]:
 
 
 def materials_dict() -> dict:
+    """Built once per scene (several cassettes share one set; label slot
+    names must stay exact for the GLB)."""
+    existing = bpy.data.materials.get("LABEL_FRONT")
+    if existing is not None and "nc_cassette_set" in existing:
+        names = existing["nc_cassette_set"]
+        return {k: bpy.data.materials[v] for k, v in names.items()}
+    built = _build_materials()
+    built["LABEL_FRONT"]["nc_cassette_set"] = {k: m.name for k, m in built.items()}
+    return built
+
+
+def _build_materials() -> dict:
     return {
         "shell": mats.plastic("VHS_Shell", mats.Plastic(roughness=0.48, rough_var=0.08, stipple=0.9,
                                                         scratch=0.3, seed=1.0)),

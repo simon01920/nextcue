@@ -124,8 +124,9 @@ def cyclorama(size: float = 1.6, curve: float = 0.25, color=(0.018, 0.018, 0.02,
         a = (math.pi / 2) * s / segs
         profile.append((half - curve + math.sin(a) * curve, curve - math.cos(a) * curve))
     profile.append((half, size * 0.8))
+    # authored in mm like every other mesh (materials expect it)
     for x in (-half, half):
-        rows.append([bm.verts.new((x, y, z + h)) for (y, h) in profile])
+        rows.append([bm.verts.new((x / MM, y / MM, (z + h) / MM)) for (y, h) in profile])
     for i in range(len(profile) - 1):
         bm.faces.new((rows[0][i], rows[1][i], rows[1][i + 1], rows[0][i + 1]))
     mesh = bpy.data.meshes.new("Cyclorama")
@@ -134,6 +135,7 @@ def cyclorama(size: float = 1.6, curve: float = 0.25, color=(0.018, 0.018, 0.02,
     for p in mesh.polygons:
         p.use_smooth = True
     obj = bpy.data.objects.new("Cyclorama", mesh)
+    obj.scale = (MM, MM, MM)
     bpy.context.scene.collection.objects.link(obj)
     obj.data.materials.append(matte("Backdrop", color, roughness=0.55))
     return obj
