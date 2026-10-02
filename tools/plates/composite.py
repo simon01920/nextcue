@@ -95,7 +95,7 @@ PALETTE = [(0.85, 0.12, 0.10), (0.08, 0.10, 0.12), (0.93, 0.89, 0.80), (0.10, 0.
 
 
 def spine_art(title: str, seed: int, px_per_mm: float = 4.0) -> np.ndarray:
-    m = manifest()["spine"]
+    m = manifest()["atlas"]["spine"]
     cw, ch = m["canvas_mm"]
     W, H = int(round(cw * px_per_mm)), int(round(ch * px_per_mm))
     rnd = random.Random(seed)
@@ -131,6 +131,109 @@ def spine_art(title: str, seed: int, px_per_mm: float = 4.0) -> np.ndarray:
     return np.asarray(im, dtype=np.float32) / 255.0
 
 
+def hero_art(title: str, seed: int, px_per_mm: float = 6.0) -> np.ndarray:
+    """Hero atlas: back | spine | front, plus the two cassette stickers."""
+    m = manifest()["atlas"]["hero"]
+    cw, ch = m["canvas_mm"]
+    W, H = int(cw * px_per_mm), int(ch * px_per_mm)
+    rnd = random.Random(seed)
+    a, b = rnd.sample(PALETTE, 2)
+    im = Image.new("RGB", (W, H), (230, 226, 216))
+    dr = ImageDraw.Draw(im)
+
+    def rect(name):
+        r = m["regions"][name]
+        return (int(r["x"] * W), int(r["y"] * H), int((r["x"] + r["w"]) * W), int((r["y"] + r["h"]) * H))
+
+    # poster: vertical gradient a -> b with a big circle 'sun' and stripes
+    x0, y0, x1, y1 = rect("back")[0], 0, rect("front")[2], rect("front")[3]
+    for y in range(y0, y1):
+        t = (y - y0) / (y1 - y0)
+        col = tuple(int(255 * (a[i] * (1 - t) + b[i] * t)) for i in range(3))
+        dr.line([(x0, y), (x1, y)], fill=col)
+    fx0, fy0, fx1, fy1 = rect("front")
+    cx, cy, r = (fx0 + fx1) // 2, fy0 + (fy1 - fy0) * 2 // 5, (fx1 - fx0) // 3
+    dr.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(250, 200, 80))
+    for k in range(6):
+        yy = cy + r // 3 + k * r // 6
+        dr.rectangle([fx0, yy, fx1, yy + r // 14], fill=tuple(int(c * 255 * 0.6) for c in b))
+    font = ImageFont.truetype(str(FONTS / "Anton-Regular.ttf"), int((fx1 - fx0) * 0.16))
+    dr.text(((fx0 + fx1) / 2, fy1 - (fy1 - fy0) * 0.16), title.upper(), font=font, fill=(250, 248, 240),
+            anchor="mm")
+    # spine title (top-to-bottom)
+    sx0, sy0, sx1, sy1 = rect("spine")
+    sw = sx1 - sx0
+    txt = Image.new("RGBA", (int((sy1 - sy0) * 0.8), sw), (0, 0, 0, 0))
+    td = ImageDraw.Draw(txt)
+    size = int(sw * 0.55)
+    while size > 8:
+        f = ImageFont.truetype(str(FONTS / "Anton-Regular.ttf"), size)
+        if td.textlength(title.upper(), font=f) <= txt.width * 0.95:
+            break
+        size -= 1
+    td.text((txt.width / 2, sw / 2), title.upper(), font=f, fill=(250, 248, 240, 255), anchor="mm")
+    rot = txt.rotate(-90, expand=True)
+    im.paste(rot, (sx0, sy0 + int((sy1 - sy0) * 0.1)), rot)
+    # back cover blurb blocks
+    bx0, by0, bx1, by1 = rect("back")
+    for k in range(9):
+        yy = by0 + (by1 - by0) * (0.45 + k * 0.04)
+        dr.rectangle([bx0 + 40, yy, bx1 - 40 - (k % 3) * 60, yy + 10], fill=(240, 236, 228))
+    # cassette stickers: cream paper with title
+    for name, scale in (("cassette_face", 0.2), ("cassette_spine", 0.6)):
+        x0, y0, x1, y1 = rect(name)
+        dr.rectangle([x0, y0, x1, y1], fill=(238, 232, 214))
+        dr.rectangle([x0, y0, x1, y0 + (y1 - y0) // 6], fill=tuple(int(c * 255) for c in a))
+        f = ImageFont.truetype(str(FONTS / "Anton-Regular.ttf"), int((y1 - y0) * scale))
+        dr.text(((x0 + x1) / 2, (y0 + y1) / 2 + (y1 - y0) // 12), title.upper(), font=f, fill=(30, 28, 26),
+                anchor="mm")
+    return np.asarray(im, dtype=np.float32) / 255.0
+
+
+def dvd_art(title: str, seed: int, px_per_mm: float = 6.0) -> np.ndarray:
+    """DVD insert atlas (back | spine | front), same poster language."""
+    m = manifest()["atlas"]["dvd"]
+    cw, ch = m["canvas_mm"]
+    W, H = int(cw * px_per_mm), int(ch * px_per_mm)
+    rnd = random.Random(seed)
+    a, b = rnd.sample(PALETTE, 2)
+    im = Image.new("RGB", (W, H))
+    dr = ImageDraw.Draw(im)
+    for y in range(H):
+        t = y / H
+        dr.line([(0, y), (W, y)], fill=tuple(int(255 * (a[i] * (1 - t) + b[i] * t)) for i in range(3)))
+
+    def rect(name):
+        r = m["regions"][name]
+        return (int(r["x"] * W), int(r["y"] * H), int((r["x"] + r["w"]) * W), int((r["y"] + r["h"]) * H))
+
+    fx0, fy0, fx1, fy1 = rect("front")
+    cx, cy = (fx0 + fx1) // 2, fy0 + (fy1 - fy0) * 2 // 5
+    for k in range(7, 0, -1):
+        r = (fx1 - fx0) * k // 18
+        shade = tuple(int(255 * min(1, (a[i] + b[i]) * 0.3 + k * 0.08)) for i in range(3))
+        dr.ellipse([cx - r, cy - r, cx + r, cy + r], outline=shade, width=max(2, r // 14))
+    f = ImageFont.truetype(str(FONTS / "Anton-Regular.ttf"), int((fx1 - fx0) * 0.14))
+    dr.text((cx, fy1 - (fy1 - fy0) * 0.18), title.upper(), font=f, fill=(250, 248, 240), anchor="mm")
+    dr.rectangle([fx0, fy0, fx1, fy0 + int((fy1 - fy0) * 0.05)], fill=(18, 18, 20))
+    f2 = ImageFont.truetype(str(FONTS / "Figtree-ExtraBold.ttf"), int((fy1 - fy0) * 0.03))
+    dr.text((cx, fy0 + int((fy1 - fy0) * 0.025)), "DVD VIDEO", font=f2, fill=(240, 240, 240), anchor="mm")
+    sx0, sy0, sx1, sy1 = rect("spine")
+    sw = sx1 - sx0
+    txt = Image.new("RGBA", (int((sy1 - sy0) * 0.7), sw), (0, 0, 0, 0))
+    td = ImageDraw.Draw(txt)
+    size = int(sw * 0.6)
+    while size > 6:
+        f3 = ImageFont.truetype(str(FONTS / "Anton-Regular.ttf"), size)
+        if td.textlength(title.upper(), font=f3) <= txt.width * 0.95:
+            break
+        size -= 1
+    td.text((txt.width / 2, sw / 2), title.upper(), font=f3, fill=(250, 248, 240, 255), anchor="mm")
+    rot = txt.rotate(-90, expand=True)
+    im.paste(rot, (sx0, sy0 + int((sy1 - sy0) * 0.15)), rot)
+    return np.asarray(im, dtype=np.float32) / 255.0
+
+
 def tag_art(text: str, w_mm: float = 352.0, h_mm: float = 19.0, px_per_mm: float = 4.0) -> np.ndarray:
     W, H = int(w_mm * px_per_mm), int(h_mm * px_per_mm)
     im = Image.new("RGB", (W, H), (236, 230, 214))
@@ -147,7 +250,7 @@ def tag_art(text: str, w_mm: float = 352.0, h_mm: float = 19.0, px_per_mm: float
 
 def compose_bay(m: dict, bay_index: int, tapes: list[dict], tag: str) -> np.ndarray:
     """tapes: [{'title', 'seed', 'state': upright|sealed|pulled}] (<= slots)."""
-    L = m["shelf"]
+    L = m["groups"]["shelf"]
     P = m["plates"]
     W, H = L["bay_px"]
     slot_px, slot0 = L["slot_px"], L["slot0_left_px"]
@@ -191,19 +294,60 @@ def to_image(canvas: np.ndarray, bg=(0.02, 0.02, 0.022)) -> Image.Image:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("what", choices=["shelf", "plate"])
+    ap.add_argument("what", choices=["shelf", "plate", "hero", "samples"])
     ap.add_argument("name", nargs="?")
     ap.add_argument("--rows", type=int, default=2)
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
     m = manifest()
-    if a.what == "plate":
+    if a.what == "samples":
+        # The two generated showcase images used by blender/build.py beauty
+        # renders (see README "Generated images").
+        cache = ROOT / "blender" / "_cache"
+        cache.mkdir(parents=True, exist_ok=True)
+        hero = hero_art("Slnko v sieti", 11, px_per_mm=8.0)
+        Image.fromarray((hero * 255 + 0.5).astype(np.uint8)).save(cache / "sample_hero.png")
+        cells = [spine_art(TITLES[i], 100 + i * 7) for i in range(16)]
+        ch, cw = cells[0].shape[:2]
+        grid = np.zeros((ch * 4, cw * 4, 3), np.float32)
+        for i, c in enumerate(cells):
+            col, row_from_bottom = i % 4, i // 4      # Blender UVs are v-up
+            r = 3 - row_from_bottom
+            grid[r * ch:(r + 1) * ch, col * cw:(col + 1) * cw] = c
+        Image.fromarray((grid * 255 + 0.5).astype(np.uint8)).save(cache / "sample_spines.png")
+        dvd = dvd_art("Hra o tróny", 21)
+        Image.fromarray((dvd * 255 + 0.5).astype(np.uint8)).save(cache / "sample_dvd.png")
+        print(cache / "sample_hero.png", cache / "sample_spines.png", cache / "sample_dvd.png")
+        return
+    if a.what == "hero":
+        art = hero_art("Slnko v sieti", 11)
+        P = m["plates"]
+        frames = [P[k] for k in sorted(P) if k.startswith("hero/rot_")]
+        cas = [P[k] for k in sorted(P) if k.startswith("hero/cassette_")]
+        tw, th = m["groups"]["hero"]["size"]
+        cols = 6
+        rows = (len(frames) + cols - 1) // cols
+        sheet = np.zeros((rows * th + th, cols * tw, 4), np.float32)
+        for i, e in enumerate(frames):
+            over(sheet, render_plate(e, art), (i % cols) * tw, (i // cols) * th)
+        for i, e in enumerate(cas):
+            c = render_plate(e, art)
+            ci = Image.fromarray((np.clip(c, 0, 1) * 255).astype(np.uint8), "RGBA")
+            ci = ci.resize((tw * cols // len(cas), int(c.shape[0] * tw * cols / len(cas) / c.shape[1])))
+            over(sheet, np.asarray(ci, np.float32) / 255.0, i * (tw * cols // len(cas)), rows * th + 40)
+        img = to_image(sheet, bg=(0.93, 0.93, 0.94))
+        out = Path(a.out or ROOT / "renders" / "_preview" / "composite_hero.png")
+        hi = P.get("hero/front_hi")
+        if hi:
+            to_image(render_plate(hi, art), bg=(0.08, 0.08, 0.09)).save(out.with_name("composite_hero_front.png"))
+    elif a.what == "plate":
         e = m["plates"][a.name]
-        art = spine_art("Hra o tróny", 3) if e.get("uvset") == "spine" else None
+        art = {"spine": spine_art("Hra o tróny", 3), "hero": hero_art("Hra o tróny", 3),
+               "tag": tag_art("DRAMA · 12")}.get(e.get("atlas"))
         img = to_image(render_plate(e, art))
         out = Path(a.out or ROOT / "renders" / "_preview" / f"plate_{a.name.replace('/', '_')}.png")
     else:
-        L = m["shelf"]
+        L = m["groups"]["shelf"]
         rows = []
         rnd = random.Random(7)
         titles = list(TITLES)

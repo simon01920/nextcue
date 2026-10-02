@@ -63,9 +63,26 @@ SPINE = _layout(*SPINE_CANVAS, {
 })
 
 
+# DVD keep case (Amaray-style): the insert unfolds back | spine | front.
+DVD_W, DVD_H, DVD_D = 135.0, 190.0, 14.0
+DVD_CANVAS = (2 * DVD_W + DVD_D, DVD_H)
+DVD = _layout(*DVD_CANVAS, {
+    "back": (0.0, 0.0, DVD_W, DVD_H),
+    "spine": (DVD_W, 0.0, DVD_D, DVD_H),
+    "front": (DVD_W + DVD_D, 0.0, DVD_W, DVD_H),
+})
+
+# Section card in the shelf rail: one per bay, the whole canvas is the card
+# (UV_LABEL_TAG runs 0..1 across it). Must match shelf.build_rail.
+TAG_CANVAS = (352.0, 19.0)
+TAG = _layout(*TAG_CANVAS, {"card": (0.0, 0.0, *TAG_CANVAS)})
+
+
 def manifest_json() -> dict:
     return {
         "hero": {"canvas_mm": list(HERO_CANVAS), "regions": {k: r.as_json() for k, r in HERO.items()}},
         "spine": {"canvas_mm": list(SPINE_CANVAS), "regions": {k: r.as_json() for k, r in SPINE.items()}},
+        "tag": {"canvas_mm": list(TAG_CANVAS), "regions": {k: r.as_json() for k, r in TAG.items()}},
+        "dvd": {"canvas_mm": list(DVD_CANVAS), "regions": {k: r.as_json() for k, r in DVD.items()}},
         "sleeve_mm": [SLEEVE_W, SLEEVE_H, SLEEVE_D],
     }

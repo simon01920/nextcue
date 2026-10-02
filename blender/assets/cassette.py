@@ -346,9 +346,18 @@ def build_reel(name: str, cx: float, cy: float, fraction: float, materials) -> l
     o = geo.to_object(bm, name + "_Hub")
     o.data.materials.append(materials["hub"])
     objs.append(o)
-    # cap with six windows (spokes) seen through the clear flange
+    # cap seen through the clear flange: inner and outer rings joined by six
+    # spokes, the dark hub interior showing between them
+    cap_z = z0 + TAPE_W + 2.6
     bm = bmesh.new()
-    geo.cylinder(bm, 9.4, 0.8, segments=48, center=(0, 0, z0 + TAPE_W + 2.6), inner_radius=3.2)
+    geo.cylinder(bm, 9.4, 0.8, segments=48, center=(0, 0, cap_z), inner_radius=8.0)
+    geo.cylinder(bm, 4.6, 0.8, segments=32, center=(0, 0, cap_z), inner_radius=2.0)
+    for k in range(6):
+        spoke = bmesh.ops.create_cube(bm, size=1.0)["verts"]
+        bmesh.ops.scale(bm, vec=(3.8, 1.7, 0.8), verts=spoke)
+        bmesh.ops.translate(bm, vec=(6.3, 0, cap_z), verts=spoke)
+        bmesh.ops.rotate(bm, matrix=Matrix.Rotation(2 * math.pi * k / 6 + math.pi / 6, 3, "Z"),
+                         verts=spoke, cent=(0, 0, 0))
     o = geo.to_object(bm, name + "_Cap")
     o.data.materials.append(materials["hub"])
     objs.append(o)

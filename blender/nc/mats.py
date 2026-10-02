@@ -169,22 +169,22 @@ def mode_group() -> bpy.types.ShaderNodeTree:
     if grp is not None:
         return grp
     grp = bpy.data.node_groups.new("NC_Mode", "ShaderNodeTree")
-    grp.interface.new_socket("mode", in_out="OUTPUT", socket_type="NodeSocketFloat")
-    grp.interface.new_socket("uvset", in_out="OUTPUT", socket_type="NodeSocketFloat")
     out = grp.nodes.new("NodeGroupOutput")
-    mode = grp.nodes.new("ShaderNodeValue")
-    mode.name = mode.label = "mode"
-    uvset = grp.nodes.new("ShaderNodeValue")
-    uvset.name = uvset.label = "uvset"
-    grp.links.new(mode.outputs[0], out.inputs[0])
-    grp.links.new(uvset.outputs[0], out.inputs[1])
+    # grid: showcase renders draw each object's art from one cell of the
+    # NC_SAMPLE_SPINES grid (picked by the object's random value)
+    for i, key in enumerate(("mode", "uvset", "grid")):
+        grp.interface.new_socket(key, in_out="OUTPUT", socket_type="NodeSocketFloat")
+        v = grp.nodes.new("ShaderNodeValue")
+        v.name = v.label = key
+        grp.links.new(v.outputs[0], out.inputs[i])
     return grp
 
 
-def set_mode(mode: int, uvset: int = 0) -> None:
+def set_mode(mode: int, uvset: int = 0, grid: bool = False) -> None:
     grp = mode_group()
     grp.nodes["mode"].outputs[0].default_value = float(mode)
     grp.nodes["uvset"].outputs[0].default_value = float(uvset)
+    grp.nodes["grid"].outputs[0].default_value = 1.0 if grid else 0.0
     # Nudge Cycles to recompile shaders that depend on the group.
     for mat in bpy.data.materials:
         if mat.node_tree is not None:
@@ -367,6 +367,7 @@ def clear_plastic(name: str, tint=(0.92, 0.94, 0.95, 1.0), roughness: float = 0.
     passthru = g.add("ShaderNodeBsdfTransparent", inputs={"Color": tint}).outputs[0]
     shaded = g.mix_shader(lp.outputs["Is Shadow Ray"], bsdf.outputs[0], passthru)
     _finish(g, shaded, label=False, clear=True)
+    mat["nc_clear"] = {"tint": list(tint), "roughness": roughness}
     return mat
 
 
@@ -405,6 +406,7 @@ def film(name: str, *, crinkle: float = 1.0, transmit: float = 0.93) -> bpy.type
     f2 = g.math("MULTIPLY", fres.outputs[0], 1.8, clamp=True)
     shaded = g.mix_shader(f2, thru.outputs[0], gloss.outputs[0])
     _finish(g, shaded, label=False, clear=True, d_transmit=transmit)
+    mat["nc_clear"] = {"tint": [transmit, transmit, transmit, 1.0], "roughness": 0.04, "film": True}
     return mat
 
 
@@ -487,7 +489,9 @@ def label(name: str, p: Print = Print()) -> bpy.types.Material:
     gloss; the D pass renders white diffuse. Scuffed varnish near edges is
     driven by pointiness so worn corners lose their sheen."""
     mat, g = _new_material(name)
-    mat["nc_label"] = True
+    # read by the GLB exporter, which rebuilds labels as swappable slots
+    mat["nc_label"] = {"uv": p.uv_hero, "roughness": p.ink_roughness, "coat": p.coat,
+                       "coat_roughness": p.coat_roughness}
     co = _coords(g, "Object")
     geo = g.add("ShaderNodeNewGeometry")
     edge = g.math("SMOOTH_MAX", g.math("MULTIPLY_ADD", geo.outputs["Pointiness"], 6.0, -3.05), 0.0, clamp=True)
@@ -525,8 +529,23 @@ def label(name: str, p: Print = Print()) -> bpy.types.Material:
     sample_uv = g.add("ShaderNodeUVMap", uv_map=p.uv_hero)
     tex = g.add("ShaderNodeTexImage", image=sample_image(), interpolation="Cubic")
     g.link(sample_uv.outputs[0], tex.inputs["Vector"])
+    # grid variant: spine UVs into one of 4x4 cells chosen per object
+    info = g.add("ShaderNodeObjectInfo")
+    cell = g.math("FLOOR", g.math("MULTIPLY", info.outputs["Random"], 15.999))
+    cx = g.math("MULTIPLY", g.math("MODULO", cell, 4.0), 0.25)
+    cy = g.math("MULTIPLY", g.math("FLOOR", g.math("MULTIPLY", cell, 0.25)), 0.25)
+    suv = g.add("ShaderNodeSeparateXYZ")
+    g.link(g.add("ShaderNodeUVMap", uv_map=p.uv_spine).outputs[0], suv.inputs[0])
+    gu = g.math("MULTIPLY_ADD", suv.outputs[0], 0.25, cx)
+    gv = g.math("MULTIPLY_ADD", suv.outputs[1], 0.25, cy)
+    guv = g.add("ShaderNodeCombineXYZ")
+    g.link(gu, guv.inputs[0])
+    g.link(gv, guv.inputs[1])
+    gtex = g.add("ShaderNodeTexImage", image=sample_image("NC_SAMPLE_SPINES"), interpolation="Cubic")
+    g.link(guv.outputs[0], gtex.inputs["Vector"])
+    show_col = g.mix_color(_mode_sockets(g)[0].outputs["grid"], tex.outputs["Color"], gtex.outputs["Color"])
     show = g.add("ShaderNodeBsdfPrincipled", inputs={
-        "Base Color": tex.outputs["Color"], "Roughness": p.ink_roughness,
+        "Base Color": show_col, "Roughness": p.ink_roughness,
         "Specular IOR Level": 0.4, "Coat Weight": coat_w, "Coat Roughness": p.coat_roughness,
         "Coat IOR": 1.5, "Normal": nrm,
     })

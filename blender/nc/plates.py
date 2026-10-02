@@ -41,6 +41,7 @@ class PlateSpec:
     crop_px: tuple | None = None      # fixed (x, y, w, h) in frame pixels, no scout
     clamp_px: tuple | None = None     # scout box is intersected with this (x0, y0, x1, y1)
     scout_threshold: float = 0.01
+    uv_bits: int = 16                 # stored UV precision (low bits zeroed)
     color_format: str = "WEBP"        # WEBP | JPEG | PNG
     quality: int = 90
     anchor_world: Vector | None = None
@@ -148,14 +149,43 @@ def _image_size(path: Path) -> tuple[int, int]:
         bpy.data.images.remove(img)
 
 
+def staging(group: str) -> Path:
+    """Fresh folder a group renders into; publish() swaps it in at the end
+    so the app never sees a half-rendered group."""
+    d = CACHE / "staging" / group
+    d.mkdir(parents=True, exist_ok=True)
+    for f in d.glob("*"):
+        f.unlink()
+    return d
+
+
+def publish(stage: Path, group: str) -> Path:
+    import shutil
+    from .paths import PLATE_DIR
+    dest = PLATE_DIR / group
+    dest.mkdir(parents=True, exist_ok=True)
+    for f in dest.glob("*"):
+        if f.suffix in (".webp", ".png", ".jpg"):
+            f.unlink()
+    for f in stage.glob("*"):
+        shutil.move(str(f), str(dest / f.name))
+    return dest
+
+
 def update_manifest(group: str, entries: list[dict], extra: dict | None = None) -> Path:
     """Merge one group's plates into assets/plates/manifest.json. File names
     become paths relative to assets/plates/ (the app's asset root)."""
     import json
+    from . import atlas
     from .paths import PLATE_DIR
     path = PLATE_DIR / "manifest.json"
-    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"version": 1}
-    data.setdefault("plates", {})
+    old = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    data = {
+        "version": 2,
+        "atlas": atlas.manifest_json(),           # always the current layouts
+        "groups": old.get("groups", {}),
+        "plates": old.get("plates", {}),
+    }
     for key in [k for k in data["plates"] if k.startswith(group + "/")]:
         del data["plates"][key]
     for e in entries:
@@ -165,7 +195,7 @@ def update_manifest(group: str, entries: list[dict], extra: dict | None = None) 
                 e[k] = f"{group}/{e[k]}"
         data["plates"][f"{group}/{e['name']}"] = e
     if extra:
-        data[group] = extra
+        data["groups"][group] = extra
     path.write_text(json.dumps(data, indent=1, sort_keys=False) + "\n", encoding="utf-8")
     return path
 
@@ -274,12 +304,18 @@ def render_plate(spec: PlateSpec, out_dir: Path, *, view: str = "AgX",
             u_d, v_d = _dilate(u_img, v_img, valid)
             uh, ul = _hi_lo(u_d)
             vh, vl = _hi_lo(v_d)
+            if spec.uv_bits < 16:
+                # coarser low bytes compress far better; 13 bits is still
+                # ~0.1 px of art on the hero atlas
+                keep = (0xFF << (16 - spec.uv_bits)) & 0xFF
+                ul &= keep
+                vl &= keep
             d8 = np.clip(np.rint(d_pm * 255.0), 0, 255).astype(np.uint8)
             uv_path = write_png(out_dir / f"{spec.name}_uv.png", np.dstack([uh, vh, d8]))
             uv2_path = write_png(out_dir / f"{spec.name}_uv2.png",
                                  np.dstack([ul, vl, np.zeros_like(ul)]))
             entry.update(uv=uv_path.name, uv2=uv2_path.name, tint=[round(t, 4) for t in tint],
-                         uvset=["hero", "spine"][spec.uvset])
+                         atlas=["hero", "spine"][spec.uvset])   # meta may override (e.g. "tag")
 
         actual = _image_size(color_path)
         if actual != (x1 - x0, y1 - y0):

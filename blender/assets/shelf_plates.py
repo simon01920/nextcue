@@ -26,7 +26,6 @@ import time
 import bpy
 
 from nc import MM, mats, plates, rig, scene
-from nc.paths import PLATE_DIR
 
 from . import shelf, sleeve
 
@@ -120,8 +119,7 @@ def _column(slot: int, n: int = 1) -> tuple:
 
 
 def render_all(args) -> list[dict]:
-    out_dir = PLATE_DIR / GROUP
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = plates.staging(GROUP)
     samples = 64 if args.quick else 384
     entries: list[dict] = []
     t_all = time.time()
@@ -214,6 +212,7 @@ def render_all(args) -> list[dict]:
         "lean_max_tapes": shelf.SLOTS - 1,
         "atlas": "spine",
     }
+    plates.publish(out_dir, GROUP)
     plates.update_manifest(GROUP, entries, layout)
     _log(f"{len(entries)} shelf plates in {time.time() - t_all:.0f}s")
     return entries

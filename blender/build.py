@@ -178,7 +178,33 @@ def preview_shelf(args) -> None:
         f"({sc.render.resolution_x}x{sc.render.resolution_y})")
 
 
-PREVIEWS = {"cassette": preview_cassette, "sleeve": preview_sleeve, "shelf": preview_shelf}
+def preview_glb(args) -> None:
+    """Re-import each exported GLB into an empty scene and render it with
+    nothing but its glTF materials: proves the bake round-trips."""
+    for path in sorted(paths.GLB_DIR.glob("*.glb")):
+        sc = scene.reset()
+        scene.setup_cycles(sc, width=960, height=720, samples=64 if args.quick else 192, transparent=False)
+        rig.world_gradient(top=(0.05, 0.05, 0.055), bottom=(0.01, 0.01, 0.012))
+        bpy.ops.import_scene.gltf(filepath=str(path))
+        objs = [o for o in sc.objects if o.type == "MESH"]
+        lo = Vector((min(v[i] for o in objs for v in (o.matrix_world @ Vector(c) for c in o.bound_box))
+                     for i in range(3)))
+        hi = Vector((max(v[i] for o in objs for v in (o.matrix_world @ Vector(c) for c in o.bound_box))
+                     for i in range(3)))
+        center = (lo + hi) / 2
+        radius = (hi - lo).length / 2
+        rig.studio(target=center, radius=radius * 4)
+        floor = rig.cyclorama(size=radius * 12, z=lo.z)
+        floor.location.y += radius * 2
+        sc.camera = scene.camera("GLB", scene.orbit_location(center, radius * 3.4, -35.0, 22.0), center,
+                                 lens=60.0)
+        t0 = time.time()
+        scene.render_still(paths.RENDERS / "_preview" / f"glb_{path.stem}.png", color_mode="RGB")
+        log(f"glb_{path.stem} in {time.time() - t0:.1f}s ({len(objs)} meshes)")
+
+
+PREVIEWS = {"cassette": preview_cassette, "sleeve": preview_sleeve, "shelf": preview_shelf,
+            "glb": preview_glb}
 
 
 # --------------------------------------------------------------------------
@@ -192,8 +218,32 @@ def step_shelf_plates(args) -> None:
     shelf_plates.render_all(args)
 
 
+def step_hero_plates(args) -> None:
+    if args.no_plates:
+        return
+    from assets import hero_plates
+    hero_plates.render_all(args)
+
+
+def step_glb(args) -> None:
+    if args.no_glb:
+        return
+    from assets import export_glb
+    export_glb.export_all(args)
+
+
+def step_renders(args) -> None:
+    if args.no_renders:
+        return
+    from assets import beauty
+    beauty.render_all(args)
+
+
 STEPS = {
     "shelf": step_shelf_plates,
+    "hero": step_hero_plates,
+    "glb": step_glb,
+    "renders": step_renders,
 }
 
 

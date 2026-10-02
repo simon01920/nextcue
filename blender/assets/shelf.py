@@ -159,15 +159,20 @@ def build_rail(materials, *, x0: float, x1: float, z_offset: float = 0.0):
     return rail, card
 
 
-def lights(*, x0: float, x1: float) -> list:
-    """Warm LED strip under the plank above + soft room key + front fill."""
+def lights(*, x0: float, x1: float, rows: int = 1, room: bool = True) -> list:
+    """Warm LED strip under the plank above each row + soft room key + front
+    fill + a reflection card. Rows stack upward from z = 0."""
     width = (x1 - x0) * MM
     cx = (x0 + x1) / 2 * MM
     objs = []
-    strip = rig.area_light("LED_Strip", (cx, 0.012, (ROW_CLEAR - 1.0) * MM), (cx, 0.09, 0.0),
-                           size=(width, 0.008), power=rig.power_for(7.5, 0.2) * width / 0.37,
-                           color=(1.0, 0.80, 0.58))
-    objs.append(strip)
+    for r in range(rows):
+        dz = r * ROW_PITCH * MM
+        strip = rig.area_light(f"LED_Strip{r}", (cx, 0.012, (ROW_CLEAR - 1.0) * MM + dz), (cx, 0.09, dz),
+                               size=(width, 0.008), power=rig.power_for(7.5, 0.2) * width / 0.37,
+                               color=(1.0, 0.80, 0.58))
+        objs.append(strip)
+    if not room:
+        return objs
     key = rig.area_light("Room_Key", (cx - 0.2, -0.9, 0.55), (cx, 0.08, 0.09), size=(1.2, 0.6),
                          power=rig.power_for(1.1, 1.07), color=(1.0, 0.95, 0.9))
     objs.append(key)
@@ -208,7 +213,8 @@ def camera_for(x0: float, x1: float, z_lo: float, z_hi: float, *, px_per_mm: flo
 
 
 def place_tape(source: bpy.types.Object, x: float, *, pull: float = 0.0, yaw_deg: float = 0.0,
-               lean_deg: float = 0.0, height: float = 1.0, name: str = "Tape", extra=()) -> list:
+               lean_deg: float = 0.0, height: float = 1.0, name: str = "Tape", extra=(),
+               z: float = 0.0) -> list:
     """Instance a sleeve-space mesh (sleeve, shrink film …) standing on the
     plank with its spine to -Y, centred on x (mm).
 
@@ -227,7 +233,7 @@ def place_tape(source: bpy.types.Object, x: float, *, pull: float = 0.0, yaw_deg
     pivot = Vector((side * sleeve.HD * MM, 0, 0))
     lean = (Matrix.Translation(pivot) @ Matrix.Rotation(-math.radians(lean_deg), 4, "Y")
             @ Matrix.Translation(-pivot))
-    place = Matrix.Translation((x * MM, (TAPE_FRONT_Y + sleeve.HW - pull) * MM, 0))
+    place = Matrix.Translation((x * MM, (TAPE_FRONT_Y + sleeve.HW - pull) * MM, z * MM))
     mm = Matrix.Diagonal((MM, MM, MM, 1.0))   # meshes are authored in mm
     world = place @ lean @ yaw @ lift @ to_shelf @ mm
     out = []
