@@ -132,13 +132,14 @@ void main() {
           isTrue);
     });
 
-    test('logo goes over the poster only when the poster is busy', () async {
+    test('logo never goes over a real poster, only makes poster-less covers',
+        () async {
       final photos = await PhotoTapes.all();
       final composer = LabelComposer(recordText: true);
       bool frontLogo(List<TextPlacement> ps) =>
           ps.any((p) => p.region == 'front' && p.text == '[logo]');
       await composer.composeHero(photos['busy_poster']!, sizePx: 512);
-      expect(frontLogo(composer.lastTextPlacements), isTrue);
+      expect(frontLogo(composer.lastTextPlacements), isFalse);
       await composer.composeHero(photos['full_art']!, sizePx: 512);
       expect(frontLogo(composer.lastTextPlacements), isFalse);
       // No poster: background + logo make the cover.

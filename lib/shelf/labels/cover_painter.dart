@@ -90,13 +90,11 @@ class FrontCoverPainter {
     final background = ctx.data.background;
     if (poster != null) {
       // The TVDB poster, printed: cover-fit (top-biased), graded, grain
-      // and vignette. Posters carry their own title treatment, so the clear
-      // logo goes on only when the art is busy enough to swallow it.
+      // and vignette. Real posters carry their own title lettering (even
+      // busy collages), so the clear logo is never laid over one; the
+      // bottom strip names the title.
       LabelPrint.cover(canvas, poster, art, alignY: -0.6);
       LabelPrint.vignette(canvas, art, strength: 0.17);
-      if (ctx.logo != null && ctx.posterDetail >= busyPoster) {
-        _logoOverArt(canvas, art, ctx);
-      }
     } else if (background != null) {
       backgroundCover(canvas, art, ctx, background);
     } else {
@@ -111,23 +109,6 @@ class FrontCoverPainter {
         level: ctx.wear,
         edges: const WearEdges(left: 1.5, top: 1, right: 0.8, bottom: 1));
     canvas.restore();
-  }
-
-  /// [PosterSwatch.detail] above which a poster counts as busy (a collage,
-  /// a crowd): only then does the clear logo go over it. Calibrated on the
-  /// test art: clean key-art posters measure 0.028-0.053, a 5x7 collage
-  /// 0.074.
-  static const double busyPoster = 0.065;
-
-  /// The clear logo in the lower third of [art] on an ink scrim, one-colour
-  /// if it would vanish into it.
-  static void _logoOverArt(Canvas canvas, Rect art, LabelContext ctx) {
-    final ink = LabelColors.mix(ctx.palette.ink, LabelColors.printBlack, 0.4);
-    LabelArt.scrim(canvas, art, ink, from: 0.5, strength: 0.88);
-    final box = Rect.fromLTRB(art.left + art.width * 0.09, art.top + art.height * 0.7,
-        art.right - art.width * 0.09, art.bottom - art.height * 0.06);
-    LabelArt.logo(canvas, ctx.logo!, ctx.logoInfo, box,
-        ground: ink, recorder: ctx.recorder);
   }
 
   /// No poster but TVDB background art: a portrait crop of the fanart,
