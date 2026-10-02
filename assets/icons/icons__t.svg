@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="12" height="12" viewBox="0 0 12 12">
+    <defs>
+        <path id="67avk3p3ia" d="M16 6L8 6 8 10 12 10 12 18 16 18 16 10 20 10 20 6 16 6"/>
+    </defs>
+    <g fill="none" fill-rule="evenodd">
+        <g>
+            <g>
+                <g transform="translate(-287 -505) translate(12 337) translate(267 162)">
+                    <use fill="#FFD400" xlink:href="#67avk3p3ia"/>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

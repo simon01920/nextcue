@@ -1,0 +1,60 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# --- NextCue ---------------------------------------------------------------
+# Reference screenshots of other apps (large; kept locally, not versioned).
+/inspiration/
+# Third-party CC-BY models/textures downloaded for v0. The remodel does not use
+# them (the brief forbids downloaded models); see docs/AUDIT.md §1.2.
+/assets/vhs/
+# Golden-test failure artefacts.
+/test/failures/
+# Blender pipeline intermediates. Final GLBs and plates are committed.
+/blender/_cache/
+*.blend1
+/renders/_frames/
+# Local tooling scratch.
+/tools/**/node_modules/
