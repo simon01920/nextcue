@@ -1,0 +1,83 @@
+{
+  "description": "Remodelled shelf: profile favourites shelf and the collection screen, same seed as before_v0.json.",
+  "steps": [
+    {
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "dpr": 2
+      }
+    },
+    {
+      "goto": "http://127.0.0.1:8199/"
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "seed": {
+        "nextcue.onboarded": true,
+        "bingely.session": "{\"uid\":\"local-qa\",\"email\":\"qa@nextcue.app\",\"name\":\"QA\"}",
+        "bingely.local-qa.themeMode": 2,
+        "bingely.local-qa.favorites": [
+          "series-81189",
+          "series-121361",
+          "series-305288",
+          "series-79168",
+          "series-73244",
+          "series-279830",
+          "series-176941"
+        ],
+        "bingely.local-qa.statuses": "{\"series-81189\":\"completed\",\"series-121361\":\"completed\",\"series-305288\":\"watching\",\"series-79168\":\"completed\",\"series-73244\":\"watching\",\"series-279830\":\"completed\",\"series-176941\":\"planToWatch\"}",
+        "bingely.local-qa.watched": [
+          "series-305288:1:1",
+          "series-305288:1:2",
+          "series-305288:1:3",
+          "series-305288:1:4",
+          "series-305288:1:5",
+          "series-73244:2:1",
+          "series-73244:2:2",
+          "series-73244:2:3",
+          "series-73244:2:4",
+          "series-73244:2:5",
+          "series-73244:2:6",
+          "series-73244:2:7",
+          "series-73244:2:8",
+          "series-73244:2:9",
+          "series-73244:2:10",
+          "series-73244:2:11",
+          "series-73244:2:12",
+          "series-73244:2:13"
+        ],
+        "bingely.local-qa.watchedAt": "{\"series-305288:1:1\": 1759400000000, \"series-305288:1:2\": 1759400060000, \"series-305288:1:3\": 1759400120000, \"series-305288:1:4\": 1759400180000, \"series-305288:1:5\": 1759400240000, \"series-73244:2:1\": 1759400300000, \"series-73244:2:2\": 1759400360000, \"series-73244:2:3\": 1759400420000, \"series-73244:2:4\": 1759400480000, \"series-73244:2:5\": 1759400540000, \"series-73244:2:6\": 1759400600000, \"series-73244:2:7\": 1759400660000, \"series-73244:2:8\": 1759400720000, \"series-73244:2:9\": 1759400780000, \"series-73244:2:10\": 1759400840000, \"series-73244:2:11\": 1759400900000, \"series-73244:2:12\": 1759400960000, \"series-73244:2:13\": 1759401020000}"
+      }
+    },
+    {
+      "reload": true
+    },
+    {
+      "waitFlutter": 30000
+    },
+    {
+      "wait": 6000
+    },
+    {
+      "hash": "/profile"
+    },
+    {
+      "wait": 15000
+    },
+    {
+      "shot": "docs/audit/after-profile.png"
+    },
+    {
+      "hash": "/collection"
+    },
+    {
+      "wait": 15000
+    },
+    {
+      "shot": "docs/audit/after-collection.png"
+    }
+  ]
+}

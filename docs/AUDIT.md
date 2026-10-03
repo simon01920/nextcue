@@ -132,10 +132,90 @@ Nothing in `vhs_shelf.dart` or `assets/vhs/` is worth keeping.
 * At runtime each tape has one **label atlas** `T` (spine, front, back, cassette label) composed by Flutter from the poster, logo, fitted title and state stickers. The shader computes `out = C + T(uv) · D`, which is exact on anti-aliased edges because coverage is already folded into `D`.
 * Same pixels on Impeller, Skia and CanvasKit; no 3D engine at runtime.
 
+**Real-time GLB was not adopted.** The brief allowed it only if proven at
+60 fps on a mid-range Android at equal quality. It fails on quality before
+performance matters:
+* `flutter_gpu` has no web backend, so real-time 3D would need a second
+  renderer for the web build.
+* What makes the plates photographic is path-traced: area-light soft
+  shadows, contact shadows between packed tapes, laminate reflections of
+  room-sized softboxes, and inter-reflection inside the shelf bays.
+  A mobile rasteriser approximates these with shadow maps and a single
+  environment map, visibly worse at shelf scale.
+* A 100-tape shelf in real time is 100 × 50k faces (5M) or LOD meshes. With
+  plates it is 12 shader quads per bay, composed once into a cached image.
+
+The GLBs are still built and committed (`assets/3d/`) as portable assets
+with baked PBR textures, and the build re-imports them to prove the bake.
+
+As built (2026-10-02): 13 shelf plates (0.44 MB) and 42 hero plates
+(5.1 MB: 36 rotation frames, 2× front, 5 cassette progress levels). The UV
+precision is 16-bit on the shelf and 13-bit on the hero. The contract is in
+`docs/PLATES.md`.
+
 Benchmark numbers are appended to §6 once measured.
 
 ---
 
 ## 6. Benchmarks
 
-*(filled in after integration)*
+### 6.1 Scrolling a 100-tape shelf (2026-10-03)
+
+`integration_test/shelf_benchmark_test.dart`: real `ShelfRenderer`, label
+composer and plate shader. 100 tapes in three sections (10 watching,
+30 not started, 60 completed), and 12 flings down then 12 up per pass.
+Profile build, measured with `FrameTimingSummarizer`:
+
+```bash
+flutter drive --profile --no-dds --driver=test_driver/perf_driver.dart --target=integration_test/shelf_benchmark_test.dart -d emulator-5554
+```
+
+Device: Android emulator `medium_phone` (x86_64, GLES through the host's
+RTX 2070 SUPER, `ro.hardware.egl=emulation`), Impeller.
+
+| Pass | UI avg / p90 / p99 (ms) | Raster avg / p90 / p99 (ms) | Frames | Over 16.7 ms raster |
+|---|---|---|---|---|
+| Shelf, cold (rows compose while scrolling) | 5.0 / 10.0 / 24.6 | 33.0 / 50.9 / 106.7 | 666 | 646 |
+| Shelf, warm (cached rows) | 4.8 / 9.0 / 22.7 | 31.2 / 48.0 / 83.9 | 712 | 686 |
+| **Control**: plain list of 12 bay-size images, no shelf code | 3.9 / 7.5 / 15.3 | 29.5 / 45.0 / 79.8 | 729 | 693 |
+
+Reading:
+* **The UI thread fits 60 fps**: 5 ms on average, 9–10 ms at p90.
+* **The raster thread does not reach 60 fps on this emulator, but neither
+  does a plain image list.** The control, with no shelf code at all, costs
+  29.5 ms per frame, so the emulator's translated GLES is the bottleneck.
+  Over the control, the shelf adds **+1.7 ms per frame warm and +3.4 ms
+  cold** (the row composition).
+* The same run with Skia (`--no-enable-impeller`) hung during app start on
+  this emulator and produced no numbers.
+* **Not met / not measured:** 60 fps on a real mid-range Android phone. No
+  physical device was available, so the brief's acceptance number
+  is unproven. Given the control, the shelf's own share is small, but this
+  needs a run on hardware with the command above.
+
+### 6.2 Composition cost
+
+* Label atlas in `flutter_tester` (software raster, an upper bound):
+  * shelf spine (224 px): ~19 ms
+  * hero atlas (1536 px): ~120 ms
+  * recording only: 1 ms and 2.5 ms
+* Both run off the scroll path. A row's labels are composed once into a
+  cached row image, and the inspect view composes its hero atlas while
+  the tape lifts out.
+
+### 6.3 Texture memory (documented on `PlateImageCache`)
+
+* **Browsing: about 65 MB.**
+  * shelf plates: 21.4 MB, resident
+  * composed rows: up to 28 MiB
+  * spine art: up to 12 MiB
+  * rail cards: up to 3 MiB
+* **The inspect view adds about 45 MB while open**, all freed on close:
+  * hero atlas: 9.4 MB
+  * up to 10 composited frames: 24 MiB
+  * `front_hi`: 9.2 MB
+  * cassette: 2.2 MB
+  * a frame's sources are dropped right after it is composited
+* Web (CanvasKit, release build, demo account):
+  * heap with the collection open: 33.5 MB
+  * peak with the inspect view open: 134 MB, flat across repeated full turns

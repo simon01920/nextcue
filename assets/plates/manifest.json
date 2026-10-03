@@ -251,325 +251,6 @@
   }
  },
  "plates": {
-  "shelf/bay_0": {
-   "name": "bay_0",
-   "frame": [
-    1116,
-    690
-   ],
-   "crop": [
-    0,
-    0,
-    1116,
-    690
-   ],
-   "color": "shelf/bay_0_color.webp",
-   "size": [
-    1116,
-    690
-   ]
-  },
-  "shelf/rail": {
-   "name": "rail",
-   "frame": [
-    1116,
-    690
-   ],
-   "crop": [
-    24,
-    595,
-    1068,
-    95
-   ],
-   "color": "shelf/rail_color.webp",
-   "uv": "shelf/rail_uv.png",
-   "uv2": "shelf/rail_uv2.png",
-   "tint": [
-    1.0106,
-    0.9983,
-    0.9911
-   ],
-   "atlas": "tag",
-   "size": [
-    1068,
-    95
-   ]
-  },
-  "shelf/bay_1": {
-   "name": "bay_1",
-   "frame": [
-    1116,
-    690
-   ],
-   "crop": [
-    0,
-    0,
-    1116,
-    690
-   ],
-   "color": "shelf/bay_1_color.webp",
-   "size": [
-    1116,
-    690
-   ]
-  },
-  "shelf/bay_2": {
-   "name": "bay_2",
-   "frame": [
-    1116,
-    690
-   ],
-   "crop": [
-    0,
-    0,
-    1116,
-    690
-   ],
-   "color": "shelf/bay_2_color.webp",
-   "size": [
-    1116,
-    690
-   ]
-  },
-  "shelf/tape_a": {
-   "name": "tape_a",
-   "frame": [
-    1116,
-    690
-   ],
-   "crop": [
-    472,
-    0,
-    86,
-    690
-   ],
-   "color": "shelf/tape_a_color.webp",
-   "uv": "shelf/tape_a_uv.png",
-   "uv2": "shelf/tape_a_uv2.png",
-   "tint": [
-    1.0325,
-    0.9997,
-    0.9678
-   ],
-   "atlas": "spine",
-   "size": [
-    86,
-    690
-   ],
-   "slot": 5,
-   "pull_mm": 0.0,
-   "height": 1.0
-  },
-  "shelf/tape_b": {
-   "name": "tape_b",
-   "frame": [
-    1116,
-    690
-   ],
-   "crop": [
-    472,
-    0,
-    86,
-    690
-   ],
-   "color": "shelf/tape_b_color.webp",
-   "uv": "shelf/tape_b_uv.png",
-   "uv2": "shelf/tape_b_uv2.png",
-   "tint": [
-    1.0329,
-    0.9995,
-    0.9676
-   ],
-   "atlas": "spine",
-   "size": [
-    86,
-    690
-   ],
-   "slot": 5,
-   "pull_mm": 1.4,
-   "height": 0.988
-  },
-  "shelf/tape_c": {
-   "name": "tape_c",
-   "frame": [
-    1116,
-    690
-   ],
-   "crop": [
-    472,
-    0,
-    86,
-    690
-   ],
-   "color": "shelf/tape_c_color.webp",
-   "uv": "shelf/tape_c_uv.png",
-   "uv2": "shelf/tape_c_uv2.png",
-   "tint": [
-    1.0303,
-    0.9993,
-    0.9703
-   ],
-   "atlas": "spine",
-   "size": [
-    86,
-    690
-   ],
-   "slot": 5,
-   "pull_mm": 2.8,
-   "height": 1.008
-  },
-  "shelf/tape_d": {
-   "name": "tape_d",
-   "frame": [
-    1116,
-    690
-   ],
-   "crop": [
-    472,
-    0,
-    86,
-    690
-   ],
-   "color": "shelf/tape_d_color.webp",
-   "uv": "shelf/tape_d_uv.png",
-   "uv2": "shelf/tape_d_uv2.png",
-   "tint": [
-    1.0294,
-    0.9992,
-    0.9714
-   ],
-   "atlas": "spine",
-   "size": [
-    86,
-    690
-   ],
-   "slot": 5,
-   "pull_mm": 4.2,
-   "height": 0.995
-  },
-  "shelf/tape_sealed": {
-   "name": "tape_sealed",
-   "frame": [
-    1116,
-    690
-   ],
-   "crop": [
-    472,
-    0,
-    86,
-    690
-   ],
-   "color": "shelf/tape_sealed_color.webp",
-   "uv": "shelf/tape_sealed_uv.png",
-   "uv2": "shelf/tape_sealed_uv2.png",
-   "tint": [
-    1.0356,
-    0.9996,
-    0.9648
-   ],
-   "atlas": "spine",
-   "size": [
-    86,
-    690
-   ],
-   "slot": 5,
-   "pull_mm": 0.6
-  },
-  "shelf/tape_pulled": {
-   "name": "tape_pulled",
-   "frame": [
-    1116,
-    690
-   ],
-   "crop": [
-    472,
-    0,
-    86,
-    690
-   ],
-   "color": "shelf/tape_pulled_color.webp",
-   "uv": "shelf/tape_pulled_uv.png",
-   "uv2": "shelf/tape_pulled_uv2.png",
-   "tint": [
-    1.0163,
-    0.9988,
-    0.985
-   ],
-   "atlas": "spine",
-   "size": [
-    86,
-    690
-   ],
-   "slot": 5,
-   "pull_mm": 16.0
-  },
-  "shelf/tape_pulled_shadow": {
-   "name": "tape_pulled_shadow",
-   "frame": [
-    1116,
-    690
-   ],
-   "crop": [
-    386,
-    0,
-    258,
-    690
-   ],
-   "color": "shelf/tape_pulled_shadow_color.webp",
-   "size": [
-    258,
-    690
-   ],
-   "slot": 5
-  },
-  "shelf/tape_end_shadow": {
-   "name": "tape_end_shadow",
-   "frame": [
-    1116,
-    690
-   ],
-   "crop": [
-    558,
-    0,
-    258,
-    690
-   ],
-   "color": "shelf/tape_end_shadow_color.webp",
-   "size": [
-    258,
-    690
-   ],
-   "slot": 5
-  },
-  "shelf/tape_lean": {
-   "name": "tape_lean",
-   "frame": [
-    1116,
-    690
-   ],
-   "crop": [
-    429,
-    0,
-    670,
-    653
-   ],
-   "color": "shelf/tape_lean_color.webp",
-   "uv": "shelf/tape_lean_uv.png",
-   "uv2": "shelf/tape_lean_uv2.png",
-   "tint": [
-    1.0354,
-    0.9995,
-    0.9651
-   ],
-   "atlas": "spine",
-   "size": [
-    670,
-    653
-   ],
-   "slot": 5,
-   "lean_deg": 9.0,
-   "slots_used": 2
-  },
   "hero/rot_00": {
    "name": "rot_00",
    "frame": [
@@ -1741,6 +1422,325 @@
     620
    ],
    "progress": 1.0
+  },
+  "shelf/bay_0": {
+   "name": "bay_0",
+   "frame": [
+    1116,
+    690
+   ],
+   "crop": [
+    0,
+    0,
+    1116,
+    690
+   ],
+   "color": "shelf/bay_0_color.webp",
+   "size": [
+    1116,
+    690
+   ]
+  },
+  "shelf/rail": {
+   "name": "rail",
+   "frame": [
+    1116,
+    690
+   ],
+   "crop": [
+    24,
+    595,
+    1068,
+    95
+   ],
+   "color": "shelf/rail_color.webp",
+   "uv": "shelf/rail_uv.png",
+   "uv2": "shelf/rail_uv2.png",
+   "tint": [
+    1.0106,
+    0.9983,
+    0.9911
+   ],
+   "atlas": "tag",
+   "size": [
+    1068,
+    95
+   ]
+  },
+  "shelf/bay_1": {
+   "name": "bay_1",
+   "frame": [
+    1116,
+    690
+   ],
+   "crop": [
+    0,
+    0,
+    1116,
+    690
+   ],
+   "color": "shelf/bay_1_color.webp",
+   "size": [
+    1116,
+    690
+   ]
+  },
+  "shelf/bay_2": {
+   "name": "bay_2",
+   "frame": [
+    1116,
+    690
+   ],
+   "crop": [
+    0,
+    0,
+    1116,
+    690
+   ],
+   "color": "shelf/bay_2_color.webp",
+   "size": [
+    1116,
+    690
+   ]
+  },
+  "shelf/tape_a": {
+   "name": "tape_a",
+   "frame": [
+    1116,
+    690
+   ],
+   "crop": [
+    472,
+    0,
+    86,
+    690
+   ],
+   "color": "shelf/tape_a_color.webp",
+   "uv": "shelf/tape_a_uv.png",
+   "uv2": "shelf/tape_a_uv2.png",
+   "tint": [
+    1.0325,
+    0.9997,
+    0.9678
+   ],
+   "atlas": "spine",
+   "size": [
+    86,
+    690
+   ],
+   "slot": 5,
+   "pull_mm": 0.0,
+   "height": 1.0
+  },
+  "shelf/tape_b": {
+   "name": "tape_b",
+   "frame": [
+    1116,
+    690
+   ],
+   "crop": [
+    472,
+    0,
+    86,
+    690
+   ],
+   "color": "shelf/tape_b_color.webp",
+   "uv": "shelf/tape_b_uv.png",
+   "uv2": "shelf/tape_b_uv2.png",
+   "tint": [
+    1.0329,
+    0.9995,
+    0.9676
+   ],
+   "atlas": "spine",
+   "size": [
+    86,
+    690
+   ],
+   "slot": 5,
+   "pull_mm": 1.4,
+   "height": 0.988
+  },
+  "shelf/tape_c": {
+   "name": "tape_c",
+   "frame": [
+    1116,
+    690
+   ],
+   "crop": [
+    472,
+    0,
+    86,
+    690
+   ],
+   "color": "shelf/tape_c_color.webp",
+   "uv": "shelf/tape_c_uv.png",
+   "uv2": "shelf/tape_c_uv2.png",
+   "tint": [
+    1.0303,
+    0.9993,
+    0.9703
+   ],
+   "atlas": "spine",
+   "size": [
+    86,
+    690
+   ],
+   "slot": 5,
+   "pull_mm": 2.8,
+   "height": 1.008
+  },
+  "shelf/tape_d": {
+   "name": "tape_d",
+   "frame": [
+    1116,
+    690
+   ],
+   "crop": [
+    472,
+    0,
+    86,
+    690
+   ],
+   "color": "shelf/tape_d_color.webp",
+   "uv": "shelf/tape_d_uv.png",
+   "uv2": "shelf/tape_d_uv2.png",
+   "tint": [
+    1.0294,
+    0.9992,
+    0.9714
+   ],
+   "atlas": "spine",
+   "size": [
+    86,
+    690
+   ],
+   "slot": 5,
+   "pull_mm": 4.2,
+   "height": 0.995
+  },
+  "shelf/tape_sealed": {
+   "name": "tape_sealed",
+   "frame": [
+    1116,
+    690
+   ],
+   "crop": [
+    472,
+    0,
+    86,
+    690
+   ],
+   "color": "shelf/tape_sealed_color.webp",
+   "uv": "shelf/tape_sealed_uv.png",
+   "uv2": "shelf/tape_sealed_uv2.png",
+   "tint": [
+    1.0356,
+    0.9996,
+    0.9648
+   ],
+   "atlas": "spine",
+   "size": [
+    86,
+    690
+   ],
+   "slot": 5,
+   "pull_mm": 0.6
+  },
+  "shelf/tape_pulled": {
+   "name": "tape_pulled",
+   "frame": [
+    1116,
+    690
+   ],
+   "crop": [
+    472,
+    0,
+    86,
+    690
+   ],
+   "color": "shelf/tape_pulled_color.webp",
+   "uv": "shelf/tape_pulled_uv.png",
+   "uv2": "shelf/tape_pulled_uv2.png",
+   "tint": [
+    1.0163,
+    0.9988,
+    0.985
+   ],
+   "atlas": "spine",
+   "size": [
+    86,
+    690
+   ],
+   "slot": 5,
+   "pull_mm": 16.0
+  },
+  "shelf/tape_pulled_shadow": {
+   "name": "tape_pulled_shadow",
+   "frame": [
+    1116,
+    690
+   ],
+   "crop": [
+    386,
+    0,
+    258,
+    690
+   ],
+   "color": "shelf/tape_pulled_shadow_color.webp",
+   "size": [
+    258,
+    690
+   ],
+   "slot": 5
+  },
+  "shelf/tape_end_shadow": {
+   "name": "tape_end_shadow",
+   "frame": [
+    1116,
+    690
+   ],
+   "crop": [
+    558,
+    0,
+    258,
+    690
+   ],
+   "color": "shelf/tape_end_shadow_color.webp",
+   "size": [
+    258,
+    690
+   ],
+   "slot": 5
+  },
+  "shelf/tape_lean": {
+   "name": "tape_lean",
+   "frame": [
+    1116,
+    690
+   ],
+   "crop": [
+    429,
+    0,
+    670,
+    653
+   ],
+   "color": "shelf/tape_lean_color.webp",
+   "uv": "shelf/tape_lean_uv.png",
+   "uv2": "shelf/tape_lean_uv2.png",
+   "tint": [
+    1.0354,
+    0.9995,
+    0.9651
+   ],
+   "atlas": "spine",
+   "size": [
+    670,
+    653
+   ],
+   "slot": 5,
+   "lean_deg": 9.0,
+   "slots_used": 2
   }
  }
 }

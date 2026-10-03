@@ -69,8 +69,10 @@ def _box(name, x0, x1, y0, y1, z0, z1, *, cuts=(1, 1, 1)):
 
 def materials_dict(seed: float) -> dict:
     walnut = mats.Wood(seed=seed, axis="X", dust=0.5)
-    back = mats.Wood(base=(0.10, 0.055, 0.03, 1.0), dark=(0.04, 0.02, 0.012, 1.0), roughness=0.62,
-                     grain_scale=18.0, seed=seed + 31.0, axis="Z", dust=0.05)
+    # Horizontal grain: under the top-down LED a vertical grain read as
+    # draped curtains in part-empty bays.
+    back = mats.Wood(base=(0.10, 0.055, 0.03, 1.0), dark=(0.05, 0.026, 0.015, 1.0), roughness=0.62,
+                     grain_scale=26.0, seed=seed + 31.0, axis="X", dust=0.05)
     divider = mats.Wood(seed=101.0, axis="Z", dust=0.15)
     return {
         "plank": mats.cached(f"Shelf_Plank_{seed:g}", lambda: mats.wood(f"Shelf_Plank_{seed:g}", walnut)),
