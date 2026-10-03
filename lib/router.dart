@@ -22,6 +22,7 @@ import 'screens/settings_screen.dart';
 import 'screens/title_detail_screen.dart';
 import 'screens/episode_detail_screen.dart';
 import 'screens/comments_screen.dart';
+import 'screens/collection_screen.dart';
 import 'models/models.dart';
 
 /// One route per recon sitemap entry, matching the source URL shapes.
@@ -118,6 +119,10 @@ GoRouter buildRouter(AuthController auth,
       GoRoute(
         path: '/stats',
         builder: (c, s) => const StatsScreen(),
+      ),
+      GoRoute(
+        path: '/collection',
+        builder: (c, s) => const CollectionScreen(),
       ),
       GoRoute(
         path: '/notifications',

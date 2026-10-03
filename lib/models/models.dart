@@ -115,13 +115,14 @@ class MediaTitle {
   bool get isShow => kind == MediaKind.show;
 }
 
-/// Branding artwork for the VHS shelf: transparent clear-logo plus a
-/// background/fanart still, both optional.
+/// Branding artwork for the VHS shelf: transparent clear-logo, a
+/// background/fanart still and a wide banner, all optional.
 @immutable
 class BrandArt {
   final String? clearLogo;
   final String? background;
-  const BrandArt({this.clearLogo, this.background});
+  final String? banner;
+  const BrandArt({this.clearLogo, this.background, this.banner});
 }
 
 @immutable

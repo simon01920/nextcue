@@ -32,7 +32,12 @@ flutter:
   assets:
     - assets/icons/
     - assets/animations/
-    - assets/vhs/textures/None_baseColor.png
+    - assets/plates/
+    - assets/plates/shelf/
+    - assets/plates/hero/
+
+  shaders:
+    - shaders/plate.frag
 
   fonts:
     - family: Figtree

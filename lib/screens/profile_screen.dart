@@ -57,15 +57,30 @@ class ProfileScreen extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(
               AppSpacing.md, AppSpacing.lg, AppSpacing.md, 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text('Favourites shelf',
-                  style: AppTextStyles.sectionHeader),
-              const SizedBox(height: 2),
-              Text(
-                  '${favourites.length}/${AppState.favoriteLimitFree} tapes',
-                  style: AppTextStyles.subtitle),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Favourites shelf',
+                        style: AppTextStyles.sectionHeader),
+                    const SizedBox(height: 2),
+                    Text(
+                        '${favourites.length}/${AppState.favoriteLimitFree} tapes',
+                        style: AppTextStyles.subtitle),
+                  ],
+                ),
+              ),
+              TextButton.icon(
+                key: const Key('profileCollectionLink'),
+                onPressed: () => context.push('/collection'),
+                icon: Icon(Icons.video_library_outlined,
+                    size: 18, color: AppColors.textPrimary),
+                label: Text('Collection',
+                    style: AppTextStyles.tabLabelActive),
+              ),
             ],
           ),
         ),

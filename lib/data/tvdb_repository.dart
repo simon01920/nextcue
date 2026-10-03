@@ -516,9 +516,10 @@ class TvdbRepository implements ContentRepository {
 
   final Map<String, BrandArt> _brandCache = {};
 
-  /// Clear-logo (TVDB artwork type 23 series / 25 movie) + background for
-  /// the VHS shelf. AniList titles have no logo — the shelf falls back to
-  /// styled text over the banner.
+  /// Clear-logo, background and banner for the VHS shelf, by TVDB v4
+  /// artwork type (`/artwork/types`): series 23 / 3 / 1, movies 25 / 15 /
+  /// 16. AniList titles have no logo; their banner image serves as both
+  /// background and banner.
   @override
   Future<BrandArt> brandArt(String titleId) async {
     final cached = _brandCache[titleId];
@@ -529,7 +530,7 @@ class TvdbRepository implements ContentRepository {
       final parsed = parseId(titleId);
       if (ani != null || parsed == null || !tvdb.isConfigured) {
         final t = await titleById(titleId);
-        art = BrandArt(background: t.banner ?? t.poster);
+        art = BrandArt(background: t.banner ?? t.poster, banner: t.banner);
       } else if (parsed.$1 == MediaKind.movie) {
         final ext = await tvdb.movieExtended(parsed.$2);
         final artworks = (ext['artworks'] as List? ?? const [])
@@ -537,18 +538,22 @@ class TvdbRepository implements ContentRepository {
         String? byType(int type) => TvdbApi.absoluteImage(artworks
             .firstWhere((a) => a['type'] == type,
                 orElse: () => const {})['image'] as String?);
-        art = BrandArt(clearLogo: byType(25), background: byType(15));
+        art = BrandArt(
+            clearLogo: byType(25), background: byType(15), banner: byType(16));
       } else {
         final artworks = await tvdb.seriesArtworks(parsed.$2);
         String? byType(int type) => TvdbApi.absoluteImage(artworks
             .firstWhere((a) => a['type'] == type,
                 orElse: () => const {})['image'] as String?);
-        art = BrandArt(clearLogo: byType(23), background: byType(3));
+        art = BrandArt(
+            clearLogo: byType(23), background: byType(3), banner: byType(1));
       }
       if (art.background == null) {
         final t = await titleById(titleId);
         art = BrandArt(
-            clearLogo: art.clearLogo, background: t.banner ?? t.poster);
+            clearLogo: art.clearLogo,
+            background: t.banner ?? t.poster,
+            banner: art.banner);
       }
     } catch (_) {
       art = const BrandArt();
