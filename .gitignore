@@ -51,7 +51,7 @@ app.*.map.json
 # them (the brief forbids downloaded models); see docs/AUDIT.md §1.2.
 /assets/vhs/
 # Golden-test failure artefacts.
-/test/failures/
+/test/**/failures/
 # Blender pipeline intermediates. Final GLBs and plates are committed.
 /blender/_cache/
 *.blend1
