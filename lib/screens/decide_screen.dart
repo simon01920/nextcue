@@ -139,7 +139,10 @@ Future<ui.Image?> _loadUiImage(String? url) {
   late ImageStreamListener listener;
   listener = ImageStreamListener(
     (info, _) {
-      if (!completer.isCompleted) completer.complete(info.image);
+      // Clone: the stream's handle is released with the cache entry, and
+      // painting a disposed image throws. The caller owns (and disposes)
+      // the clone.
+      if (!completer.isCompleted) completer.complete(info.image.clone());
       stream.removeListener(listener);
     },
     onError: (e, s) {
@@ -181,7 +184,12 @@ class _WheelDeciderState extends State<_WheelDecider>
     _posters = List.filled(widget.titles.length, null);
     for (var i = 0; i < widget.titles.length; i++) {
       _loadUiImage(widget.titles[i].poster).then((img) {
-        if (mounted && img != null) setState(() => _posters[i] = img);
+        if (img == null) return;
+        if (!mounted) {
+          img.dispose();
+          return;
+        }
+        setState(() => _posters[i] = img);
       });
     }
   }
@@ -210,6 +218,9 @@ class _WheelDeciderState extends State<_WheelDecider>
   @override
   void dispose() {
     _ctrl.dispose();
+    for (final p in _posters) {
+      p?.dispose();
+    }
     super.dispose();
   }
 

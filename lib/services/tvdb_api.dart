@@ -19,6 +19,10 @@ class TvdbApi {
   static const String _base = 'https://api4.thetvdb.com/v4';
   static const String apiKey = String.fromEnvironment('TVDB_API_KEY');
 
+  /// A stalled connection must end in the error state, not an endless
+  /// spinner.
+  static const Duration requestTimeout = Duration(seconds: 15);
+
   String? _token;
   DateTime _tokenTime = DateTime.fromMillisecondsSinceEpoch(0);
   final http.Client _client;
@@ -36,16 +40,32 @@ class TvdbApi {
   }
 
   Future<String> _login() async {
-    final res = await _client.post(
-      Uri.parse('$_base/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'apikey': apiKey}),
-    );
+    final res = await _client
+        .post(
+          Uri.parse('$_base/login'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'apikey': apiKey}),
+        )
+        .timeout(requestTimeout);
     if (res.statusCode != 200) {
       throw TvdbException('login failed: HTTP ${res.statusCode}');
     }
     final data = jsonDecode(res.body) as Map<String, dynamic>;
     return (data['data'] as Map<String, dynamic>)['token'] as String;
+  }
+
+  Future<void>? _loginInFlight;
+
+  /// One login for every request that finds the token missing or expired at
+  /// the same moment (screens load several titles in parallel), instead of
+  /// one POST /login each.
+  Future<void> _refreshToken() {
+    return _loginInFlight ??= _login().then((t) {
+      _token = t;
+      _tokenTime = DateTime.now();
+    }).whenComplete(() {
+      _loginInFlight = null;
+    });
   }
 
   Future<Map<String, dynamic>> _get(String path,
@@ -69,22 +89,20 @@ class TvdbApi {
   Future<String> _fetchRaw(String path, Uri uri) async {
     if (_token == null ||
         DateTime.now().difference(_tokenTime) > const Duration(hours: 20)) {
-      _token = await _login();
-      _tokenTime = DateTime.now();
+      await _refreshToken();
     }
-    var res =
-        await _client.get(uri, headers: {'Authorization': 'Bearer $_token'});
+    var res = await _client.get(uri,
+        headers: {'Authorization': 'Bearer $_token'}).timeout(requestTimeout);
     if (res.statusCode == 401) {
-      _token = await _login();
-      _tokenTime = DateTime.now();
-      res =
-          await _client.get(uri, headers: {'Authorization': 'Bearer $_token'});
+      await _refreshToken();
+      res = await _client.get(uri,
+          headers: {'Authorization': 'Bearer $_token'}).timeout(requestTimeout);
     }
     if (res.statusCode == 429) {
       final wait = retryAfterDelay(res.headers['retry-after']);
       await Future<void>.delayed(wait);
-      res =
-          await _client.get(uri, headers: {'Authorization': 'Bearer $_token'});
+      res = await _client.get(uri,
+          headers: {'Authorization': 'Bearer $_token'}).timeout(requestTimeout);
     }
     if (res.statusCode != 200) {
       throw TvdbException('GET $path failed: HTTP ${res.statusCode}');
@@ -107,8 +125,7 @@ class TvdbApi {
       if (type != null) 'type': type,
       'limit': '$limit',
     });
-    return (body['data'] as List? ?? const [])
-        .cast<Map<String, dynamic>>();
+    return (body['data'] as List? ?? const []).cast<Map<String, dynamic>>();
   }
 
   /// /series/filter sorted by score — the "trending" source.
@@ -119,8 +136,7 @@ class TvdbApi {
       'sort': 'score',
       'sortType': 'desc',
     });
-    return (body['data'] as List? ?? const [])
-        .cast<Map<String, dynamic>>();
+    return (body['data'] as List? ?? const []).cast<Map<String, dynamic>>();
   }
 
   Future<List<Map<String, dynamic>>> trendingMovies() async {
@@ -130,15 +146,13 @@ class TvdbApi {
       'sort': 'score',
       'sortType': 'desc',
     });
-    return (body['data'] as List? ?? const [])
-        .cast<Map<String, dynamic>>();
+    return (body['data'] as List? ?? const []).cast<Map<String, dynamic>>();
   }
 
   /// /series/{id}/extended — series meta incl. characters, artworks and
   /// name/overview translations (meta=translations).
   Future<Map<String, dynamic>> seriesExtended(int id) async {
-    final body =
-        await _get('/series/$id/extended', {'meta': 'translations'});
+    final body = await _get('/series/$id/extended', {'meta': 'translations'});
     return (body['data'] as Map<String, dynamic>?) ?? const {};
   }
 
@@ -148,8 +162,7 @@ class TvdbApi {
     final body =
         await _get('/series/$id/episodes/default/eng', {'page': '$page'});
     final data = (body['data'] as Map<String, dynamic>?) ?? const {};
-    return (data['episodes'] as List? ?? const [])
-        .cast<Map<String, dynamic>>();
+    return (data['episodes'] as List? ?? const []).cast<Map<String, dynamic>>();
   }
 
   /// /series/{id}/artworks — full artwork list (posters type 2,
@@ -157,8 +170,7 @@ class TvdbApi {
   Future<List<Map<String, dynamic>>> seriesArtworks(int id) async {
     final body = await _get('/series/$id/artworks', {'lang': 'eng'});
     final data = (body['data'] as Map<String, dynamic>?) ?? const {};
-    return (data['artworks'] as List? ?? const [])
-        .cast<Map<String, dynamic>>();
+    return (data['artworks'] as List? ?? const []).cast<Map<String, dynamic>>();
   }
 
   Future<Map<String, dynamic>> movieExtended(int id) async {
