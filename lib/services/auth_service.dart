@@ -177,11 +177,13 @@ class AuthController extends ChangeNotifier {
   bool get loggedIn => _account != null;
   bool get restored => _restored;
 
-  /// Emails whose first registration claims the seeded Simon profile.
-  static const claimedEmails = {
-    'owner@example.com',
-    'owner2@example.com',
-  };
+  /// Emails whose first registration claims the seeded demo profile; set at
+  /// build time with --dart-define=CLAIMED_EMAILS=a@x.com,b@y.com (see .env.example).
+  static final claimedEmails = const String.fromEnvironment('CLAIMED_EMAILS')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .where((e) => e.isNotEmpty)
+      .toSet();
 
   bool get isSeededProfile =>
       _account != null && claimedEmails.contains(_account!.email.toLowerCase());
