@@ -167,3 +167,5 @@ our own code:
 These 4 images live in `blender/_cache/` and are not shipped. Paper grain and
 speckle for the labels are generated at runtime by `LabelPrint`. Baked GLB
 textures and the plates are renders of the procedural materials, not inputs.
+
+TVDB key: copy `.env.example` to `.env`, fill it in, and run `flutter run --dart-define-from-file=.env`. `.env` is git-ignored.

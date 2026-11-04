@@ -59,3 +59,15 @@ app.*.map.json
 # Local tooling scratch.
 /tools/**/node_modules/
 /renders/_preview/
+
+# Secrets: API keys live here, never in git (see .env.example).
+.env
+.env.*
+!.env.example
+env.json
+*.keystore
+*.jks
+key.properties
+google-services.json
+GoogleService-Info.plist
+.claude/settings.local.json
