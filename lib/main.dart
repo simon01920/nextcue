@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:firebase_core/firebase_core.dart';
@@ -47,7 +48,9 @@ Future<void> main() async {
   if (auth.account != null) {
     await appState.bind(auth.account!.uid, seedDemo: auth.isSeededProfile);
     if (auth.account!.email == demoEmail) {
-      await seedDemoContent(appState, anilist);
+      // First-run seeding hits the network; never hold the first frame on
+      // it (offline it would stall startup for the full request timeout).
+      unawaited(seedDemoContent(appState, anilist));
     }
   }
 

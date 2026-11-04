@@ -20,6 +20,9 @@ class AniListApi {
   final http.Client _client;
   final ApiCache? _cache;
 
+  /// A stalled connection must end in the error/empty state, not an endless
+  /// spinner.
+  static const Duration requestTimeout = Duration(seconds: 15);
   static const Duration ttlTrending = Duration(hours: 6);
   static const Duration ttlSearch = Duration(hours: 12);
   static const Duration ttlMedia = Duration(hours: 24);
@@ -29,11 +32,13 @@ class AniListApi {
   Future<String?> _post(
       String query, Map<String, dynamic> variables, Duration ttl) async {
     Future<String> fetch() async {
-      final res = await _client.post(
-        Uri.parse(_endpoint),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'query': query, 'variables': variables}),
-      );
+      final res = await _client
+          .post(
+            Uri.parse(_endpoint),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'query': query, 'variables': variables}),
+          )
+          .timeout(requestTimeout);
       if (res.statusCode != 200) {
         throw AniListException('HTTP ${res.statusCode}');
       }
@@ -69,8 +74,7 @@ class AniListApi {
     streamingEpisodes { title thumbnail }
   ''';
 
-  Future<List<AniListMedia>> _page(
-      String query, Map<String, dynamic> variables,
+  Future<List<AniListMedia>> _page(String query, Map<String, dynamic> variables,
       {Duration ttl = ttlSearch}) async {
     final raw = await _post(query, variables, ttl);
     if (raw == null) return const [];
@@ -85,8 +89,7 @@ class AniListApi {
   }
 
   /// Trending anime. [format] narrows to 'TV', 'MOVIE', etc.; null = any.
-  Future<List<AniListMedia>> trendingAnime(
-      {int perPage = 12, String? format}) {
+  Future<List<AniListMedia>> trendingAnime({int perPage = 12, String? format}) {
     const query = '''
       query (\$perPage: Int, \$format: MediaFormat) {
         Page(page: 1, perPage: \$perPage) {
@@ -96,10 +99,13 @@ class AniListApi {
         }
       }
     ''';
-    return _page(query, {
-      'perPage': perPage,
-      if (format != null) 'format': format,
-    }, ttl: ttlTrending);
+    return _page(
+        query,
+        {
+          'perPage': perPage,
+          if (format != null) 'format': format,
+        },
+        ttl: ttlTrending);
   }
 
   /// Full-text search. [format] narrows to 'TV' / 'MOVIE'; null = any.
@@ -134,8 +140,8 @@ class AniListApi {
     final raw = await _post(query, {'id': id}, ttlMedia);
     if (raw == null) return null;
     final body = jsonDecode(raw) as Map<String, dynamic>;
-    final media =
-        (body['data'] as Map<String, dynamic>?)?['Media'] as Map<String, dynamic>?;
+    final media = (body['data'] as Map<String, dynamic>?)?['Media']
+        as Map<String, dynamic>?;
     return media == null ? null : AniListMedia.fromJson(media);
   }
 }

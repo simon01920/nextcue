@@ -131,7 +131,15 @@ class FirebaseAuthService implements AuthService {
 
   @override
   Future<Account?> restore() async {
-    final u = _auth.currentUser;
+    // currentUser is null until the persisted session has been restored
+    // (asynchronous on web), so reading it right after initializeApp
+    // signs returning users out. The first authStateChanges event is the
+    // restored state.
+    final u = _auth.currentUser ??
+        await _auth
+            .authStateChanges()
+            .first
+            .timeout(const Duration(seconds: 5), onTimeout: () => null);
     return u == null ? null : _map(u);
   }
 

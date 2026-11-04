@@ -24,6 +24,31 @@ class TvdbRepository implements ContentRepository {
 
   final Map<String, MediaTitle> _cache = {};
 
+  /// In-flight / settled title loads, so screens that ask for the same title
+  /// while it is loading share one request, and every later call returns the
+  /// *same* Future. FutureBuilder compares futures by identity: a fresh
+  /// Future on each rebuild would restart it (and repeat the JSON decode)
+  /// every time AppState notifies.
+  final Map<String, Future<MediaTitle>> _titleFutures = {};
+
+  /// Session memo for list endpoints whose results do not depend on account
+  /// state (trending rails, "top for you"). Keyed by call; failed calls are
+  /// dropped so the next build retries.
+  final Map<String, Future<List<MediaTitle>>> _listFutures = {};
+
+  Future<List<MediaTitle>> _memoList(
+      String key, Future<List<MediaTitle>> Function() load) {
+    final hit = _listFutures[key];
+    if (hit != null) return hit;
+    final f = load();
+    _listFutures[key] = f;
+    f.catchError((Object _) {
+      if (identical(_listFutures[key], f)) _listFutures.remove(key);
+      return const <MediaTitle>[];
+    });
+    return f;
+  }
+
   // ---- id helpers: canonical ids are 'series-279830' / 'movie-231' for
   // TVDB and 'series-al-21' / 'movie-al-21' for AniList-backed titles.
   static final RegExp _aniListId = RegExp(r'^(series|movie)-al-(\d+)$');
@@ -85,8 +110,13 @@ class TvdbRepository implements ContentRepository {
 
   Future<MediaTitle> _loadSeries(int num) async {
     final id = 'series-$num';
-    final ext = await tvdb.seriesExtended(num);
-    final eps = await tvdb.seriesEpisodes(num);
+    // Meta and the episode list are independent: fetch them together.
+    final results = await Future.wait<Object>([
+      tvdb.seriesExtended(num),
+      _allEpisodes(num),
+    ]);
+    final ext = results[0] as Map<String, dynamic>;
+    final eps = results[1] as List<Map<String, dynamic>>;
 
     final seasonsMap = <int, List<EpisodeRef>>{};
     for (final e in eps) {
@@ -156,6 +186,19 @@ class TvdbRepository implements ContentRepository {
     );
     _cache[id] = title;
     return title;
+  }
+
+  /// TVDB pages episode lists at 500; long-running shows (soaps, One Piece)
+  /// continue on later pages, which page 0 alone silently dropped.
+  Future<List<Map<String, dynamic>>> _allEpisodes(int num) async {
+    const pageSize = 500, maxPages = 10;
+    final all = <Map<String, dynamic>>[];
+    for (var page = 0; page < maxPages; page++) {
+      final eps = await tvdb.seriesEpisodes(num, page: page);
+      all.addAll(eps);
+      if (eps.length < pageSize) break;
+    }
+    return all;
   }
 
   String _englishName(Map<String, dynamic> ext) {
@@ -344,16 +387,49 @@ class TvdbRepository implements ContentRepository {
 
   // ---- ContentRepository ---------------------------------------------------
   @override
-  Future<MediaTitle> titleById(String id) async {
+  Future<MediaTitle> titleById(String id) {
+    final hit = _titleFutures[id];
+    if (hit != null) return hit;
     final cached = _cache[id];
-    if (cached != null) return cached;
-    final ani = parseAniListId(id);
-    if (ani != null) return _loadAniListTitle(ani.$1, ani.$2);
-    final parsed = parseId(id);
-    if (parsed == null) throw TvdbException('bad id: $id');
-    return parsed.$1 == MediaKind.movie
-        ? _loadMovie(parsed.$2)
-        : _loadSeries(parsed.$2);
+    final Future<MediaTitle> f;
+    if (cached != null) {
+      f = Future.value(cached);
+    } else {
+      final ani = parseAniListId(id);
+      final parsed = parseId(id);
+      if (ani != null) {
+        f = _loadAniListTitle(ani.$1, ani.$2);
+      } else if (parsed == null) {
+        return Future.error(TvdbException('bad id: $id'));
+      } else {
+        f = parsed.$1 == MediaKind.movie
+            ? _loadMovie(parsed.$2)
+            : _loadSeries(parsed.$2);
+      }
+    }
+    _titleFutures[id] = f;
+    // A failed load must not stick: drop it so a retry refetches.
+    f.catchError((Object _) {
+      if (identical(_titleFutures[id], f)) _titleFutures.remove(id);
+      return cached ?? _placeholderTitle(id);
+    });
+    return f;
+  }
+
+  static MediaTitle _placeholderTitle(String id) => MediaTitle(
+        id: id,
+        kind: id.startsWith('movie') ? MediaKind.movie : MediaKind.show,
+        name: '',
+        yearLine: '',
+        metaLine: '',
+      );
+
+  /// Loads [ids] concurrently, keeping input order and skipping titles that
+  /// fail (one broken title must not sink a list).
+  Future<List<MediaTitle>> _titlesOrdered(Iterable<String> ids) async {
+    final loaded = await Future.wait(ids.map((id) =>
+        titleById(id).then<MediaTitle?>((t) => t, onError: (_) => null)));
+    return loaded.whereType<MediaTitle>().toList();
   }
 
   @override
@@ -362,30 +438,25 @@ class TvdbRepository implements ContentRepository {
       ...appState.idsWithStatus(TrackStatus.watching),
       ...appState.idsWithStatus(TrackStatus.planToWatch),
     ].where((id) => id.startsWith('series')).toList();
+    final now = DateTime.now();
     final entries = <WatchlistEntry>[];
-    for (final id in ids) {
-      try {
-        final t = await titleById(id);
-        EpisodeRef? upNext;
-        var unwatchedAhead = 0;
-        for (final s in t.seasons) {
-          for (final e in s.episodes) {
-            final aired = e.airDate != null &&
-                e.airDate!.isBefore(DateTime.now());
-            if (!aired) continue;
-            if (!appState.isWatched(e.id)) {
-              upNext ??= e;
-              unwatchedAhead++;
-            }
+    for (final t in await _titlesOrdered(ids)) {
+      EpisodeRef? upNext;
+      var unwatchedAhead = 0;
+      for (final s in t.seasons) {
+        for (final e in s.episodes) {
+          final aired = e.airDate != null && e.airDate!.isBefore(now);
+          if (!aired) continue;
+          if (!appState.isWatched(e.id)) {
+            upNext ??= e;
+            unwatchedAhead++;
           }
         }
-        entries.add(WatchlistEntry(
-            title: t,
-            upNext: upNext,
-            unwatchedAhead: upNext == null ? 0 : unwatchedAhead - 1));
-      } catch (_) {
-        // one broken title must not sink the list
       }
+      entries.add(WatchlistEntry(
+          title: t,
+          upNext: upNext,
+          unwatchedAhead: upNext == null ? 0 : unwatchedAhead - 1));
     }
     return entries;
   }
@@ -394,25 +465,23 @@ class TvdbRepository implements ContentRepository {
   Future<List<UpcomingItem>> showUpcoming() async {
     final now = DateTime.now();
     final items = <UpcomingItem>[];
-    for (final id in appState.trackedIds.where((i) => i.startsWith('series'))) {
-      try {
-        final t = await titleById(id);
-        for (final s in t.seasons) {
-          for (final e in s.episodes) {
-            if (e.airDate == null || e.airDate!.isBefore(now)) continue;
-            final days = e.airDate!.difference(now).inDays;
-            items.add(UpcomingItem(
-              titleId: id,
-              showName: t.name,
-              poster: t.poster ?? '',
-              episode: e,
-              daysUntil: days,
-              airTime: days == 0 ? 'Today' : null,
-              isLatest: true,
-            ));
-          }
+    final ids = appState.trackedIds.where((i) => i.startsWith('series'));
+    for (final t in await _titlesOrdered(ids)) {
+      for (final s in t.seasons) {
+        for (final e in s.episodes) {
+          if (e.airDate == null || e.airDate!.isBefore(now)) continue;
+          final days = e.airDate!.difference(now).inDays;
+          items.add(UpcomingItem(
+            titleId: t.id,
+            showName: t.name,
+            poster: t.poster ?? '',
+            episode: e,
+            daysUntil: days,
+            airTime: days == 0 ? 'Today' : null,
+            isLatest: true,
+          ));
         }
-      } catch (_) {}
+      }
     }
     items.sort((a, b) => (a.daysUntil ?? 0).compareTo(b.daysUntil ?? 0));
     return items.take(30).toList();
@@ -420,18 +489,15 @@ class TvdbRepository implements ContentRepository {
 
   @override
   Future<List<MediaTitle>> movieWatchlist() async {
-    final ids = appState.trackedIds.where((i) => i.startsWith('movie'));
-    final out = <MediaTitle>[];
-    for (final id in ids) {
-      try {
-        out.add(await titleById(id));
-      } catch (_) {}
-    }
-    return out;
+    return _titlesOrdered(
+        appState.trackedIds.where((i) => i.startsWith('movie')));
   }
 
   @override
-  Future<List<MediaTitle>> trending(MediaKind kind) async {
+  Future<List<MediaTitle>> trending(MediaKind kind) =>
+      _memoList('trending:${kind.name}', () => _trending(kind));
+
+  Future<List<MediaTitle>> _trending(MediaKind kind) async {
     if (!tvdb.isConfigured) {
       final anime = await anilist.trendingAnime(
           perPage: 15, format: kind == MediaKind.movie ? 'MOVIE' : 'TV');
@@ -444,11 +510,11 @@ class TvdbRepository implements ContentRepository {
   }
 
   @override
-  Future<List<MediaTitle>> topForYou() async {
-    // AniList wiring: trending anime as the personalized rail.
-    final anime = await anilist.trendingAnime();
-    return anime.map(_fromAniList).toList();
-  }
+  Future<List<MediaTitle>> topForYou() => _memoList('topForYou', () async {
+        // AniList wiring: trending anime as the personalized rail.
+        final anime = await anilist.trendingAnime();
+        return anime.map(_fromAniList).toList();
+      });
 
   @override
   Future<List<MediaTitle>> search(String query, MediaKind? kind) async {
@@ -514,16 +580,17 @@ class TvdbRepository implements ContentRepository {
         .toList();
   }
 
-  final Map<String, BrandArt> _brandCache = {};
+  final Map<String, Future<BrandArt>> _brandCache = {};
 
   /// Clear-logo, background and banner for the VHS shelf, by TVDB v4
   /// artwork type (`/artwork/types`): series 23 / 3 / 1, movies 25 / 15 /
   /// 16. AniList titles have no logo; their banner image serves as both
   /// background and banner.
   @override
-  Future<BrandArt> brandArt(String titleId) async {
-    final cached = _brandCache[titleId];
-    if (cached != null) return cached;
+  Future<BrandArt> brandArt(String titleId) =>
+      _brandCache.putIfAbsent(titleId, () => _loadBrandArt(titleId));
+
+  Future<BrandArt> _loadBrandArt(String titleId) async {
     BrandArt art;
     try {
       final ani = parseAniListId(titleId);
@@ -558,7 +625,6 @@ class TvdbRepository implements ContentRepository {
     } catch (_) {
       art = const BrandArt();
     }
-    _brandCache[titleId] = art;
     return art;
   }
 

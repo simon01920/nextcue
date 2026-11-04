@@ -6,6 +6,7 @@ import '../data/repository.dart';
 import '../models/models.dart';
 import '../theme/tokens.dart';
 import '../widgets/brand.dart';
+import '../widgets/cover_resize_image.dart';
 
 /// First-launch onboarding, styled after inspiration/onboarding: a
 /// full-bleed hero still under a dark scrim, wordmark up top, big two-line
@@ -93,9 +94,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   .cast<String?>()
                   .firstWhere((u) => u != null, orElse: () => null);
               if (url == null) return const _FallbackBackdrop();
-              return Image.network(
-                url,
+              final size = MediaQuery.sizeOf(context) *
+                  MediaQuery.devicePixelRatioOf(context);
+              return Image(
+                image: CoverResizeImage(NetworkImage(url),
+                    width: size.width.ceil(), height: size.height.ceil()),
                 fit: BoxFit.cover,
+                gaplessPlayback: true,
                 errorBuilder: (_, __, ___) => const _FallbackBackdrop(),
               );
             },
