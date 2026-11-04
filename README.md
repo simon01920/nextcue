@@ -19,6 +19,14 @@ flutter analyze
 flutter test
 ```
 
+### Accounts and cloud sync (Firebase)
+
+Without Firebase, accounts and tracking data live on the device. Run
+`flutterfire configure` and the app switches to Firebase Auth plus Firestore
+sync of every account's tracking state, with no code edits. Steps, security
+rules, emulators, hosting and the free-tier budget are in
+[`docs/FIREBASE.md`](docs/FIREBASE.md).
+
 ## The VHS shelf: how it is made
 
 The tapes, the shelf and the inspect view are **not** a 3D engine at

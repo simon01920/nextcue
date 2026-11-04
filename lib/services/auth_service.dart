@@ -20,6 +20,12 @@ abstract class AuthService {
   Future<Account> register(String email, String password, String displayName);
   Future<Account> login(String email, String password);
   Future<void> logout();
+
+  /// Whether [sendPasswordReset] can do anything (needs an email backend).
+  bool get supportsPasswordReset => false;
+
+  Future<void> sendPasswordReset(String email) async =>
+      throw AuthException('Password reset needs an online account.');
 }
 
 class AuthException implements Exception {
@@ -32,7 +38,7 @@ class AuthException implements Exception {
 /// On-device account store: salted SHA-256 password hashes in
 /// shared_preferences. Active whenever Firebase isn't configured, so the
 /// login/register flow works out of the box.
-class LocalAuthService implements AuthService {
+class LocalAuthService extends AuthService {
   static const _usersKey = 'bingely.users';
   static const _sessionKey = 'bingely.session';
 
@@ -120,8 +126,8 @@ class LocalAuthService implements AuthService {
 }
 
 /// Firebase-backed accounts. Selected automatically when
-/// DefaultFirebaseOptions.hasRealConfig is true (after `flutterfire configure`).
-class FirebaseAuthService implements AuthService {
+/// main.dart finds a generated firebase_options.dart (`flutterfire configure`).
+class FirebaseAuthService extends AuthService {
   fb.FirebaseAuth get _auth => fb.FirebaseAuth.instance;
 
   Account _map(fb.User u) => Account(
@@ -149,12 +155,15 @@ class FirebaseAuthService implements AuthService {
     try {
       final cred = await _auth.createUserWithEmailAndPassword(
           email: email.trim(), password: password);
-      if (displayName.trim().isNotEmpty) {
-        await cred.user!.updateDisplayName(displayName.trim());
-      }
-      return _map(cred.user!);
+      final name = displayName.trim();
+      if (name.isNotEmpty) await cred.user!.updateDisplayName(name);
+      // The User object from the credential predates updateDisplayName.
+      final a = _map(cred.user!);
+      return name.isEmpty
+          ? a
+          : Account(uid: a.uid, email: a.email, displayName: name);
     } on fb.FirebaseAuthException catch (e) {
-      throw AuthException(e.message ?? 'Registration failed (${e.code}).');
+      throw AuthException(friendlyFirebaseError(e.code, 'Registration'));
     }
   }
 
@@ -165,13 +174,48 @@ class FirebaseAuthService implements AuthService {
           email: email.trim(), password: password);
       return _map(cred.user!);
     } on fb.FirebaseAuthException catch (e) {
-      throw AuthException(e.message ?? 'Login failed (${e.code}).');
+      throw AuthException(friendlyFirebaseError(e.code, 'Login'));
     }
   }
 
   @override
   Future<void> logout() => _auth.signOut();
+
+  @override
+  bool get supportsPasswordReset => true;
+
+  @override
+  Future<void> sendPasswordReset(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(email: email.trim());
+    } on fb.FirebaseAuthException catch (e) {
+      // Don't reveal whether an account exists for the address.
+      if (e.code == 'user-not-found') return;
+      throw AuthException(friendlyFirebaseError(e.code, 'Password reset'));
+    }
+  }
 }
+
+/// Firebase's own messages are developer-facing ("The supplied auth
+/// credential is incorrect, malformed or has expired."); map the common
+/// codes to plain sentences.
+String friendlyFirebaseError(String code, String action) => switch (code) {
+      'invalid-email' => 'Enter a valid email address.',
+      'weak-password' => 'Password must be at least 6 characters.',
+      'email-already-in-use' => 'An account with this email already exists.',
+      'invalid-credential' ||
+      'wrong-password' ||
+      'user-not-found' =>
+        'Incorrect email or password.',
+      'user-disabled' => 'This account has been disabled.',
+      'too-many-requests' =>
+        'Too many attempts. Wait a moment and try again.',
+      'network-request-failed' => 'No connection. Check your network.',
+      'operation-not-allowed' =>
+        'Email sign-in is not enabled for this app yet.',
+      _ => '$action failed ($code).',
+    };
+
 
 /// App-facing auth state. Router redirects hang off this notifier.
 class AuthController extends ChangeNotifier {
@@ -179,7 +223,11 @@ class AuthController extends ChangeNotifier {
   Account? _account;
   bool _restored = false;
 
-  AuthController(this.service);
+  AuthController(this.service, {this.beforeLogout});
+
+  /// Runs before signing out while the account is still authenticated
+  /// (Firestore rules reject writes after sign-out).
+  final Future<void> Function()? beforeLogout;
 
   Account? get account => _account;
   bool get loggedIn => _account != null;
@@ -212,7 +260,17 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
   }
 
+  bool get supportsPasswordReset => service.supportsPasswordReset;
+
+  Future<void> sendPasswordReset(String email) =>
+      service.sendPasswordReset(email);
+
   Future<void> logout() async {
+    try {
+      await beforeLogout?.call();
+    } catch (_) {
+      // Never block sign-out on a sync failure.
+    }
     await service.logout();
     _account = null;
     notifyListeners();

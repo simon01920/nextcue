@@ -81,7 +81,11 @@ class GlassSurface extends StatelessWidget {
           : null,
       child: ClipPath(
         clipper: ShapeBorderClipper(shape: shape),
-        child: BackdropFilter(
+        // Grouped: glass surfaces on screen together (bottom nav, top tabs)
+        // share one backdrop read under the app-wide BackdropGroup instead
+        // of each copying and blurring the screen behind it every frame.
+        // Without a group it behaves like a plain BackdropFilter.
+        child: BackdropFilter.grouped(
           filter: ImageFilter.blur(
               sigmaX: AppGlass.blurSigma, sigmaY: AppGlass.blurSigma),
           child: Container(

@@ -71,3 +71,10 @@ key.properties
 google-services.json
 GoogleService-Info.plist
 .claude/settings.local.json
+
+# Firebase CLI local state (copy .firebaserc.example to .firebaserc).
+.firebaserc
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log

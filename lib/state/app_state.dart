@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../services/cloud_sync.dart';
 
 /// Per-show tracking status, mirroring the source app's overflow-menu states.
 enum TrackStatus { watching, planToWatch, stopped, completed }
@@ -17,6 +20,16 @@ TrackStatus? trackStatusFrom(String? s) {
 /// per-uid namespace so every registered account keeps its own watch-state,
 /// statuses, ratings, reactions and artwork choices.
 class AppState extends ChangeNotifier {
+  AppState({this.cloud, this.cloudDebounce = const Duration(seconds: 3)});
+
+  /// Remote copy of the account's state (Firestore once Firebase is
+  /// configured). Null keeps everything on-device, exactly as before.
+  final CloudSync? cloud;
+
+  /// How long edits gather before one cloud write: rapid swiping becomes a
+  /// single document write, which keeps well inside the free daily quota.
+  final Duration cloudDebounce;
+
   SharedPreferences? _prefs;
   String _uid = 'anon';
 
@@ -46,10 +59,32 @@ class AppState extends ChangeNotifier {
     // Writes still queued for the previous account must land under *its*
     // namespace before the uid changes.
     await _flush();
+    await _flushCloud();
     _uid = uid;
     _prefs ??= await SharedPreferences.getInstance();
     final p = _prefs!;
+    _loadFromPrefs(p);
 
+    // Seed the claimed profile's account once: Your Lie in April tracked
+    // as watching with S1E1–E11 watched (matching the recon snapshot).
+    if (seedDemo && !(p.getBool(_k('seeded')) ?? false)) {
+      _statuses['series-279830'] = TrackStatus.watching;
+      for (var e = 1; e <= 11; e++) {
+        _addWatched('series-279830:1:$e');
+      }
+      await p.setBool(_k('seeded'), true);
+      _dirty.addAll(const ['statuses', 'watched']);
+      _cloudDirty.addAll(const ['statuses', 'watched']);
+      await _flush();
+    }
+    notifyListeners();
+
+    // Local data paints first; the cloud copy is merged when it arrives so
+    // startup never waits on the network.
+    if (cloud != null) unawaited(_pullCloud(uid));
+  }
+
+  void _loadFromPrefs(SharedPreferences p) {
     _watchedEpisodes
       ..clear()
       ..addAll(p.getStringList(_k('watched')) ?? const []);
@@ -109,21 +144,110 @@ class AppState extends ChangeNotifier {
       ..addAll((jsonDecode(p.getString(_k('banners')) ?? '{}')
               as Map<String, dynamic>)
           .map((k, v) => MapEntry(k, v as String)));
-    _themeMode = ThemeMode.values[
-        p.getInt(_k('themeMode')) ?? ThemeMode.dark.index];
+    final mode = p.getInt(_k('themeMode')) ?? ThemeMode.dark.index;
+    _themeMode = ThemeMode.values[mode.clamp(0, ThemeMode.values.length - 1)];
+  }
 
-    // Seed the claimed profile's account once: Your Lie in April tracked
-    // as watching with S1E1–E11 watched (matching the recon snapshot).
-    if (seedDemo && !(p.getBool(_k('seeded')) ?? false)) {
-      _statuses['series-279830'] = TrackStatus.watching;
-      for (var e = 1; e <= 11; e++) {
-        _addWatched('series-279830:1:$e');
-      }
-      await p.setBool(_k('seeded'), true);
-      _dirty.addAll(const ['statuses', 'watched']);
-      await _flush();
+  // Cloud sync ---------------------------------------------------------------
+
+  /// Every key that is persisted (locally and in the cloud).
+  static const List<String> persistedKeys = [
+    'watched',
+    'favorites',
+    'ratings',
+    'reactions',
+    'devices',
+    'favChars',
+    'lastWatched',
+    'watchedAt',
+    'statuses',
+    'posters',
+    'banners',
+    'themeMode',
+  ];
+
+  final Set<String> _cloudDirty = {};
+  Timer? _cloudTimer;
+
+  /// The persisted value for [key], in the shape stored on disk.
+  Object _rawValue(String key) => switch (key) {
+        'watched' => _watchedEpisodes.toList(),
+        'favorites' => _favorites.toList(),
+        'themeMode' => _themeMode.index,
+        _ => _encode(key),
+      };
+
+  Future<void> _pullCloud(String uid) async {
+    final remote = await cloud!.load(uid);
+    final p = _prefs;
+    if (p == null || uid != _uid) return; // account changed meanwhile
+    if (remote == null) {
+      // First sign-in for this account (or offline): upload what this
+      // device has so the next device starts from it.
+      _cloudDirty.addAll(persistedKeys);
+      _scheduleCloud();
+      return;
     }
+    // Remote wins, except for keys edited on this device since binding;
+    // those are still queued for upload and stay as they are.
+    var changed = false;
+    for (final key in persistedKeys) {
+      if (_cloudDirty.contains(key) || _dirty.contains(key)) continue;
+      final v = remote[key];
+      try {
+        if (v is List) {
+          await p.setStringList(_k(key), v.map((e) => '$e').toList());
+        } else if (v is int) {
+          await p.setInt(_k(key), v);
+        } else if (v is String) {
+          jsonDecode(v); // reject a corrupt field rather than load it
+          await p.setString(_k(key), v);
+        } else {
+          continue;
+        }
+        changed = true;
+      } catch (_) {
+        // Skip a malformed field; the local value stays.
+      }
+    }
+    if (!changed || uid != _uid) return;
+    _loadFromPrefs(p);
+    revision++;
     notifyListeners();
+  }
+
+  void _scheduleCloud() {
+    if (cloud == null) return;
+    _cloudTimer?.cancel();
+    _cloudTimer = Timer(cloudDebounce, () => unawaited(_flushCloud()));
+  }
+
+  Future<void> _flushCloud() async {
+    _cloudTimer?.cancel();
+    _cloudTimer = null;
+    final c = cloud;
+    if (c == null || _cloudDirty.isEmpty || _uid == 'anon') return;
+    final payload = {for (final k in _cloudDirty) k: _rawValue(k)};
+    _cloudDirty.clear();
+    try {
+      await c.save(_uid, payload);
+    } catch (_) {
+      // Firestore queues offline writes itself; anything else is retried
+      // with the next edit.
+      _cloudDirty.addAll(payload.keys);
+    }
+  }
+
+  /// Sends queued edits now (e.g. before sign-out or when the app pauses).
+  Future<void> syncNow() async {
+    await _flush();
+    await _flushCloud();
+  }
+
+  @override
+  void dispose() {
+    _cloudTimer?.cancel();
+    super.dispose();
   }
 
   /// One-shot per-account flag: true only the first time [key] is claimed.
@@ -149,8 +273,7 @@ class AppState extends ChangeNotifier {
         'favChars' => jsonEncode(_favChars),
         'lastWatched' => jsonEncode(_lastWatchedAt),
         'watchedAt' => jsonEncode(_watchedAt),
-        'statuses' =>
-          jsonEncode(_statuses.map((k, v) => MapEntry(k, v.name))),
+        'statuses' => jsonEncode(_statuses.map((k, v) => MapEntry(k, v.name))),
         'posters' => jsonEncode(_posterOverride),
         'banners' => jsonEncode(_bannerOverride),
         _ => throw ArgumentError(key),
@@ -186,9 +309,11 @@ class AppState extends ChangeNotifier {
   void _mutate(List<String> keys, void Function() fn) {
     fn();
     _dirty.addAll(keys);
+    _cloudDirty.addAll(keys);
     revision++;
     notifyListeners();
     _scheduleSave();
+    _scheduleCloud();
   }
 
   // Per-title watched counts, kept in step with _watchedEpisodes so list
@@ -288,6 +413,7 @@ class AppState extends ChangeNotifier {
     final ms = _lastWatchedAt[titleId];
     return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
   }
+
   int watchedCountFor(String titleId) => _watchedPerTitle[titleId] ?? 0;
   int get watchedEpisodeTotal => _watchedEpisodes.length;
 

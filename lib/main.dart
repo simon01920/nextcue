@@ -1,6 +1,8 @@
 import 'dart:async' show unawaited;
 import 'dart:ui' show PlatformDispatcher;
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -13,6 +15,7 @@ import 'router.dart';
 import 'services/anilist_api.dart';
 import 'services/api_cache.dart';
 import 'services/auth_service.dart';
+import 'services/cloud_sync.dart';
 import 'services/demo_seed.dart';
 import 'services/tvdb_api.dart';
 import 'state/app_state.dart';
@@ -25,16 +28,35 @@ Future<void> main() async {
   // Firebase when configured (flutterfire configure), local accounts until
   // then — same screens, same behavior.
   AuthService authService;
-  if (DefaultFirebaseOptions.hasRealConfig) {
-    await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform);
+  CloudSync? cloud;
+  final firebaseOptions = _firebaseOptions();
+  if (firebaseOptions != null) {
+    await Firebase.initializeApp(options: firebaseOptions);
+    // Offline-first: reads come from the local cache when there is no
+    // network and writes queue until it returns (web defaults to memory).
+    FirebaseFirestore.instance.settings = const Settings(
+      persistenceEnabled: true,
+      cacheSizeBytes: 40 * 1024 * 1024,
+    );
+    // `--dart-define=USE_FIREBASE_EMULATOR=true` points the app at the
+    // local emulators (`firebase emulators:start`), so rules and sync can
+    // be tried without touching the real project.
+    if (const bool.fromEnvironment('USE_FIREBASE_EMULATOR')) {
+      const host = String.fromEnvironment('FIREBASE_EMULATOR_HOST',
+          defaultValue: 'localhost');
+      await FirebaseAuth.instance.useAuthEmulator(host, 9099);
+      FirebaseFirestore.instance.useFirestoreEmulator(host, 8080);
+    }
     authService = FirebaseAuthService();
+    cloud = FirestoreCloudSync();
   } else {
     authService = LocalAuthService();
   }
 
-  final auth = AuthController(authService);
-  final appState = AppState();
+  final appState = AppState(cloud: cloud);
+  // Push queued edits before the session ends so nothing is stranded on
+  // this device.
+  final auth = AuthController(authService, beforeLogout: appState.syncNow);
   final prefs = await SharedPreferences.getInstance();
 
   // Shared response cache for both catalog APIs: repeat requests are served
@@ -89,6 +111,18 @@ Future<void> main() async {
   ));
 }
 
+/// The generated Firebase config for this platform, or null when Firebase
+/// isn't set up (the placeholder firebase_options.dart, or a platform that
+/// `flutterfire configure` skipped; both throw UnsupportedError). Detecting
+/// it this way means regenerating firebase_options.dart needs no other edit.
+FirebaseOptions? _firebaseOptions() {
+  try {
+    return DefaultFirebaseOptions.currentPlatform;
+  } on UnsupportedError {
+    return null;
+  }
+}
+
 class NextCueApp extends StatefulWidget {
   final AuthController auth;
   final AppState appState;
@@ -111,6 +145,25 @@ class NextCueApp extends StatefulWidget {
 class _NextCueAppState extends State<NextCueApp> {
   late final router =
       buildRouter(widget.auth, onboarded: widget.onboarded);
+
+  // Flush pending writes when the app is backgrounded: mobile OSes may kill
+  // a paused app without another callback.
+  late final AppLifecycleListener _lifecycle = AppLifecycleListener(
+    onPause: () => widget.appState.syncNow(),
+    onHide: () => widget.appState.syncNow(),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycle; // instantiate the lazy listener
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -138,9 +191,11 @@ class _NextCueAppState extends State<NextCueApp> {
             builder: (context, child) {
               final brightness = Theme.of(context).brightness;
               AppColors.applyBrightness(brightness);
-              return KeyedSubtree(
-                key: ValueKey(brightness),
-                child: child ?? const SizedBox.shrink(),
+              return BackdropGroup(
+                child: KeyedSubtree(
+                  key: ValueKey(brightness),
+                  child: child ?? const SizedBox.shrink(),
+                ),
               );
             },
             routerConfig: router,

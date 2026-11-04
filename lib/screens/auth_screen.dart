@@ -33,6 +33,7 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _submit() async {
+    if (_busy) return; // keyboard "done" + button tap must not double-submit
     setState(() {
       _busy = true;
       _error = null;
@@ -56,7 +57,32 @@ class _AuthScreenState extends State<AuthScreen> {
 
   /// One-tap demo session: logs into the shared demo account, registering
   /// it on first use. Content is seeded after login (see demo_seed.dart).
+  Future<void> _forgot() async {
+    final email = _email.text.trim();
+    if (!email.contains('@')) {
+      setState(() => _error = 'Enter your email above, then tap again.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await context.read<AuthController>().sendPasswordReset(email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('If an account exists for $email, '
+                'a reset link is on its way.')));
+      }
+    } on AuthException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _demo() async {
+    if (_busy) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -125,6 +151,16 @@ class _AuthScreenState extends State<AuthScreen> {
                     icon: Icons.lock_outline,
                     obscure: true,
                     onSubmitted: (_) => _submit()),
+                if (!_register &&
+                    context.read<AuthController>().supportsPasswordReset)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: _busy ? null : _forgot,
+                      child: Text('Forgot password?',
+                          style: AppTextStyles.linkText),
+                    ),
+                  ),
                 if (_error != null) ...[
                   const SizedBox(height: AppSpacing.md),
                   Text(_error!,

@@ -18,7 +18,16 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="NextCue: track every show and movie you watch, with a VHS shelf for your collection.">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+
+  <!-- Open the API and artwork connections while the engine downloads. -->
+  <link rel="preconnect" href="https://api4.thetvdb.com" crossorigin>
+  <link rel="preconnect" href="https://artworks.thetvdb.com">
+  <link rel="preconnect" href="https://graphql.anilist.co" crossorigin>
+  <link rel="preconnect" href="https://s4.anilist.co">
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -32,7 +41,17 @@
   <title>NextCue - TV and Movie Tracker</title>
   <link rel="manifest" href="manifest.json">
 </head>
-<body>
+<body style="margin:0;background:#000000">
+  <!-- Shown until Flutter paints its first frame, instead of a blank page. -->
+  <div id="nc-splash" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000000;color:#fff;font:600 20px system-ui,sans-serif;letter-spacing:.08em;transition:opacity .25s">NEXTCUE</div>
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      var s = document.getElementById('nc-splash');
+      if (!s) return;
+      s.style.opacity = '0';
+      setTimeout(function () { s.remove(); }, 300);
+    });
+  </script>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader
