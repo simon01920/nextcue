@@ -19,13 +19,11 @@ flutter analyze
 flutter test
 ```
 
-### Accounts and cloud sync (Firebase)
+### Accounts and cloud sync
 
-Without Firebase, accounts and tracking data live on the device. Run
-`flutterfire configure` and the app switches to Firebase Auth plus Firestore
-sync of every account's tracking state, with no code edits. Steps, security
-rules, emulators, hosting and the free-tier budget are in
-[`docs/FIREBASE.md`](docs/FIREBASE.md).
+Accounts use Firebase Authentication (email/password and Google), and each
+account's tracking state syncs through Cloud Firestore. Platforms without a
+Firebase config fall back to on-device accounts.
 
 ## The VHS shelf: how it is made
 

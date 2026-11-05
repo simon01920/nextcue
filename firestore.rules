@@ -1,36 +1,99 @@
 rules_version = '2';
 
-// NextCue: each signed-in user owns exactly one document, users/{uid},
-// written by lib/services/cloud_sync.dart. Everything else is closed.
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: the owner's Firebase Auth uid
+// Fields:
+//   - schema:    int        (required) payload layout version, 1..100
+//   - updatedAt: timestamp  (required) server timestamp of the write
+//   - state:     map        (required) the account's tracking state, written
+//                           by lib/services/cloud_sync.dart. Every key is
+//                           optional (writes merge only the changed keys):
+//       watched      list<string>  watched episode ids
+//       favorites    list<string>  favourite title ids
+//       themeMode    int           0..2
+//       ratings, reactions, devices, favChars, lastWatched, watchedAt,
+//       statuses, posters, banners:
+//                    string        JSON-encoded map
+//
+// No other collection is used by the app. No queries: the app only gets
+// and sets users/{uid} by id.
+//
+// ===============================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    match /users/{uid} {
-      allow read, delete: if isOwner(uid);
-      allow create, update: if isOwner(uid) && validUserDoc();
+    // =============================================================
+    // Helper Functions
+    // =============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // A JSON-encoded map field: a string under ~400 KB.
+    function isJsonField(v) {
+      return v is string && v.size() <= 400000;
+    }
+
+    function isIdList(v) {
+      return v is list && v.size() <= 20000;
+    }
+
+    function isValidState(s) {
+      return s is map
+        && s.keys().hasOnly([
+             'watched', 'favorites', 'ratings', 'reactions', 'devices',
+             'favChars', 'lastWatched', 'watchedAt', 'statuses', 'posters',
+             'banners', 'themeMode'
+           ])
+        && (!('watched' in s) || isIdList(s.watched))
+        && (!('favorites' in s) || (s.favorites is list && s.favorites.size() <= 100))
+        && (!('themeMode' in s) || (s.themeMode is int && s.themeMode >= 0 && s.themeMode <= 2))
+        && (!('ratings' in s) || isJsonField(s.ratings))
+        && (!('reactions' in s) || isJsonField(s.reactions))
+        && (!('devices' in s) || isJsonField(s.devices))
+        && (!('favChars' in s) || isJsonField(s.favChars))
+        && (!('lastWatched' in s) || isJsonField(s.lastWatched))
+        && (!('watchedAt' in s) || isJsonField(s.watchedAt))
+        && (!('statuses' in s) || isJsonField(s.statuses))
+        && (!('posters' in s) || isJsonField(s.posters))
+        && (!('banners' in s) || isJsonField(s.banners));
+    }
+
+    // Validator for the whole user document, used on create AND update so
+    // the stored document is always complete and well-typed afterwards.
+    function isValidUserDoc(d) {
+      return d.keys().hasAll(['schema', 'updatedAt', 'state'])
+        && d.keys().hasOnly(['schema', 'updatedAt', 'state'])
+        && d.schema is int && d.schema >= 1 && d.schema <= 100
+        && d.updatedAt == request.time
+        && isValidState(d.state);
+    }
+
+    // =============================================================
+    // Rules
+    // =============================================================
+
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow create, update: if isOwner(userId)
+        && isValidUserDoc(request.resource.data);
+      allow delete: if isOwner(userId);
     }
 
     // Default deny for every other path.
     match /{document=**} {
       allow read, write: if false;
-    }
-
-    function isOwner(uid) {
-      return request.auth != null && request.auth.uid == uid;
-    }
-
-    // Only the fields the app writes, with the right types.
-    function validUserDoc() {
-      let d = request.resource.data;
-      return d.keys().hasOnly(['schema', 'updatedAt', 'state'])
-        && d.schema is int
-        && d.updatedAt == request.time
-        && d.state is map
-        && d.state.keys().hasOnly([
-             'watched', 'favorites', 'ratings', 'reactions', 'devices',
-             'favChars', 'lastWatched', 'watchedAt', 'statuses', 'posters',
-             'banners', 'themeMode'
-           ]);
     }
   }
 }

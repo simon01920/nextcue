@@ -27,30 +27,35 @@ Future<void> main() async {
 
   // Firebase when configured (flutterfire configure), local accounts until
   // then — same screens, same behavior.
-  AuthService authService;
+  AuthService authService = LocalAuthService();
   CloudSync? cloud;
   final firebaseOptions = _firebaseOptions();
   if (firebaseOptions != null) {
-    await Firebase.initializeApp(options: firebaseOptions);
-    // Offline-first: reads come from the local cache when there is no
-    // network and writes queue until it returns (web defaults to memory).
-    FirebaseFirestore.instance.settings = const Settings(
-      persistenceEnabled: true,
-      cacheSizeBytes: 40 * 1024 * 1024,
-    );
-    // `--dart-define=USE_FIREBASE_EMULATOR=true` points the app at the
-    // local emulators (`firebase emulators:start`), so rules and sync can
-    // be tried without touching the real project.
-    if (const bool.fromEnvironment('USE_FIREBASE_EMULATOR')) {
-      const host = String.fromEnvironment('FIREBASE_EMULATOR_HOST',
-          defaultValue: 'localhost');
-      await FirebaseAuth.instance.useAuthEmulator(host, 9099);
-      FirebaseFirestore.instance.useFirestoreEmulator(host, 8080);
+    try {
+      // On web the Firebase JS SDK is fetched from gstatic.com; a blocked
+      // network or an ad blocker must leave a working app, not a blank page.
+      await Firebase.initializeApp(options: firebaseOptions)
+          .timeout(const Duration(seconds: 10));
+      // Offline-first: reads come from the local cache when there is no
+      // network and writes queue until it returns (web defaults to memory).
+      FirebaseFirestore.instance.settings = const Settings(
+        persistenceEnabled: true,
+        cacheSizeBytes: 40 * 1024 * 1024,
+      );
+      // `--dart-define=USE_FIREBASE_EMULATOR=true` points the app at the
+      // local emulators (`firebase emulators:start`), so rules and sync can
+      // be tried without touching the real project.
+      if (const bool.fromEnvironment('USE_FIREBASE_EMULATOR')) {
+        const host = String.fromEnvironment('FIREBASE_EMULATOR_HOST',
+            defaultValue: 'localhost');
+        await FirebaseAuth.instance.useAuthEmulator(host, 9099);
+        FirebaseFirestore.instance.useFirestoreEmulator(host, 8080);
+      }
+      authService = FirebaseAuthService();
+      cloud = FirestoreCloudSync();
+    } catch (e) {
+      debugPrint('Firebase unavailable, using on-device accounts: $e');
     }
-    authService = FirebaseAuthService();
-    cloud = FirestoreCloudSync();
-  } else {
-    authService = LocalAuthService();
   }
 
   final appState = AppState(cloud: cloud);

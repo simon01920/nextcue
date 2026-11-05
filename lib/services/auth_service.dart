@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'google_client_ids.dart';
+import 'auth_provider_config.dart';
 
 /// A signed-in Bingely account.
 @immutable
@@ -40,6 +40,13 @@ abstract class AuthService {
   /// closes the account picker.
   Future<Account> signInWithGoogle() async =>
       throw AuthException('Google sign-in needs an online account.');
+
+  /// Whether [signInWithApple] is offered (Firebase-backed, and enabled in
+  /// auth_provider_config.dart once Apple is configured).
+  bool get supportsApple => false;
+
+  Future<Account> signInWithApple() async =>
+      throw AuthException('Apple sign-in needs an online account.');
 }
 
 /// The user dismissed a sign-in prompt: not an error to show.
@@ -308,6 +315,51 @@ class FirebaseAuthService extends AuthService {
     }
   }
 
+  // Apple ----------------------------------------------------------------
+
+  @override
+  bool get supportsApple => kAppleSignInEnabled;
+
+  @override
+  Future<Account> signInWithApple() async {
+    final provider =
+        fb.AppleAuthProvider()
+          ..addScope('email')
+          ..addScope('name');
+    try {
+      // Native sheet on iOS/macOS; Apple's web flow (popup / Custom Tab)
+      // elsewhere, which needs the Services ID configured in Firebase.
+      final cred =
+          kIsWeb
+              ? await _auth.signInWithPopup(provider)
+              : await _auth.signInWithProvider(provider);
+      final user = cred.user!;
+      // Apple sends the name only on the very first sign-in; keep it.
+      final given = cred.additionalUserInfo?.profile?['name'];
+      var name = user.displayName;
+      if ((name == null || name.isEmpty) && given is Map) {
+        name =
+            [
+              given['firstName'],
+              given['lastName'],
+            ].whereType<String>().join(' ').trim();
+        if (name.isNotEmpty) await user.updateDisplayName(name);
+      }
+      final a = _map(user);
+      return name == null || name.isEmpty
+          ? a
+          : Account(uid: a.uid, email: a.email, displayName: name);
+    } on fb.FirebaseAuthException catch (e) {
+      if (e.code == 'canceled' ||
+          e.code == 'web-context-canceled' ||
+          e.code == 'popup-closed-by-user' ||
+          e.code == 'cancelled-popup-request') {
+        throw AuthCancelled();
+      }
+      throw AuthException(friendlyFirebaseError(e.code, 'Apple sign-in'));
+    }
+  }
+
   @override
   bool get supportsPasswordReset => true;
 
@@ -391,6 +443,12 @@ class AuthController extends ChangeNotifier {
 
   bool get supportsPasswordReset => service.supportsPasswordReset;
   bool get supportsGoogle => service.supportsGoogle;
+  bool get supportsApple => service.supportsApple;
+
+  Future<void> signInWithApple() async {
+    _account = await service.signInWithApple();
+    notifyListeners();
+  }
 
   Future<void> signInWithGoogle() async {
     _account = await service.signInWithGoogle();

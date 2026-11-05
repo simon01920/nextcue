@@ -86,14 +86,18 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  Future<void> _google() async {
+  Future<void> _google() => _provider((a) => a.signInWithGoogle());
+
+  Future<void> _apple() => _provider((a) => a.signInWithApple());
+
+  Future<void> _provider(Future<void> Function(AuthController) signIn) async {
     if (_busy) return;
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      await context.read<AuthController>().signInWithGoogle();
+      await signIn(context.read<AuthController>());
     } on AuthCancelled {
       // Closed the picker: stay on the screen without an error.
     } on AuthException catch (e) {
@@ -216,6 +220,32 @@ class _AuthScreenState extends State<AuthScreen> {
                       label: _register ? 'CREATE ACCOUNT' : 'LOG IN',
                       onTap: _submit,
                     ),
+                if (context.read<AuthController>().supportsApple) ...[
+                  const SizedBox(height: AppSpacing.md),
+                  FilledButton.icon(
+                    key: const Key('appleSignIn'),
+                    onPressed: _busy ? null : _apple,
+                    icon: const Icon(Icons.apple, size: 22),
+                    label: Text(
+                      'CONTINUE WITH APPLE',
+                      style: AppTextStyles.buttonPillCaps.copyWith(
+                        color: AppColors.isLight ? Colors.white : Colors.black,
+                      ),
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor:
+                          AppColors.isLight ? Colors.black : Colors.white,
+                      foregroundColor:
+                          AppColors.isLight ? Colors.white : Colors.black,
+                      padding: const EdgeInsets.symmetric(
+                        vertical: AppSpacing.lg,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                      ),
+                    ),
+                  ),
+                ],
                 if (context.read<AuthController>().supportsGoogle) ...[
                   const SizedBox(height: AppSpacing.md),
                   OutlinedButton.icon(
