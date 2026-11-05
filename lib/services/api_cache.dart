@@ -46,8 +46,9 @@ class ApiCache {
       final raw = _prefs.getString(_indexKey);
       if (raw == null) return;
       (jsonDecode(raw) as Map<String, dynamic>).forEach((k, v) {
-        _index[k] = (v as Map<String, dynamic>)
-            .map((k2, v2) => MapEntry(k2, v2 as int));
+        _index[k] = (v as Map<String, dynamic>).map(
+          (k2, v2) => MapEntry(k2, v2 as int),
+        );
       });
     } catch (_) {
       _index.clear();
@@ -59,12 +60,20 @@ class ApiCache {
 
   String _entryKey(String hash) => '${keyPrefix}e.$hash';
 
+  /// How old an expired entry may be and still stand in when a fetch fails
+  /// (offline, server error, rate limited). Old data beats an error screen,
+  /// and serving it instead of retrying keeps a struggling API from being
+  /// hammered by every device at once.
+  static const Duration defaultMaxStale = Duration(days: 30);
+
   /// Single entry point: memory hit → persisted hit (TTL-checked) →
-  /// coalesced network fetch. Only successful fetch results are stored.
+  /// coalesced network fetch → on failure, the newest stale copy (up to
+  /// [maxStale] old). Only successful fetch results are stored.
   Future<String> through({
     required String key,
     required Duration ttl,
     required Future<String> Function() fetch,
+    Duration maxStale = defaultMaxStale,
   }) {
     final now = _clock();
 
@@ -81,8 +90,9 @@ class ApiCache {
       final raw = _prefs.getString(_entryKey(hash));
       if (raw != null) {
         final obj = jsonDecode(raw) as Map<String, dynamic>;
-        final storedAt =
-            DateTime.fromMillisecondsSinceEpoch(obj['t'] as int? ?? 0);
+        final storedAt = DateTime.fromMillisecondsSinceEpoch(
+          obj['t'] as int? ?? 0,
+        );
         if (now.difference(storedAt) < ttl) {
           final body = obj['b'] as String;
           _mem[key] = _MemEntry(body, storedAt);
@@ -98,18 +108,52 @@ class ApiCache {
     final pending = _inFlight[key];
     if (pending != null) return pending;
 
-    final future = fetch().then((body) {
-      _put(key, body);
-      return body;
-    }).whenComplete(() {
-      // NOTE: block body is load-bearing. `whenComplete` awaits a Future
-      // returned by its callback, and `Map.remove` returns the removed
-      // value — which here is this very future. An arrow body would make
-      // the future wait on itself and hang forever.
-      _inFlight.remove(key);
-    });
+    final future = fetch()
+        .then(
+          (body) {
+            _put(key, body);
+            return body;
+          },
+          onError: (Object error, StackTrace stack) {
+            final stale = _stale(key, hash, now, maxStale);
+            if (stale != null) {
+              staleServed++;
+              return stale;
+            }
+            return Future<String>.error(error, stack);
+          },
+        )
+        .whenComplete(() {
+          // NOTE: block body is load-bearing. `whenComplete` awaits a Future
+          // returned by its callback, and `Map.remove` returns the removed
+          // value — which here is this very future. An arrow body would make
+          // the future wait on itself and hang forever.
+          _inFlight.remove(key);
+        });
     _inFlight[key] = future;
     return future;
+  }
+
+  /// Number of times a stale copy was served because a fetch failed.
+  int staleServed = 0;
+
+  String? _stale(String key, String hash, DateTime now, Duration maxStale) {
+    final mem = _mem[key];
+    if (mem != null && now.difference(mem.storedAt) < maxStale) {
+      return mem.body;
+    }
+    try {
+      final raw = _prefs.getString(_entryKey(hash));
+      if (raw == null) return null;
+      final obj = jsonDecode(raw) as Map<String, dynamic>;
+      final storedAt = DateTime.fromMillisecondsSinceEpoch(
+        obj['t'] as int? ?? 0,
+      );
+      if (now.difference(storedAt) >= maxStale) return null;
+      return obj['b'] as String;
+    } catch (_) {
+      return null;
+    }
   }
 
   void _touch(String hash) {
@@ -162,8 +206,9 @@ class ApiCache {
 
   void _evictBytes(int bytesToFree) {
     var freed = 0;
-    final byLastUsed = _index.entries.toList()
-      ..sort((a, b) => (a.value['u'] ?? 0).compareTo(b.value['u'] ?? 0));
+    final byLastUsed =
+        _index.entries.toList()
+          ..sort((a, b) => (a.value['u'] ?? 0).compareTo(b.value['u'] ?? 0));
     for (final e in byLastUsed) {
       if (freed >= bytesToFree) break;
       freed += e.value['s'] ?? 0;

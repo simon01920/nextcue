@@ -12,6 +12,19 @@ import '../widgets/common.dart';
 import '../widgets/poster.dart';
 
 class SearchScreen extends StatefulWidget {
+  /// Typing pause before a search is sent: a word typed at normal speed
+  /// becomes one request instead of one per keystroke.
+  static const Duration searchDelay = Duration(milliseconds: 450);
+
+  /// Shorter queries are not sent: one letter matches half the catalogue,
+  /// costs a request and is never what the user is looking for.
+  static const int minQueryLength = 2;
+
+  /// Trimmed, single-spaced, lower-case: "Lost ", "lost" and "LOST" are one
+  /// query (one request, one cache entry).
+  static String normalize(String q) =>
+      q.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+
   const SearchScreen({super.key});
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -37,14 +50,25 @@ class _SearchScreenState extends State<SearchScreen> {
     super.dispose();
   }
 
+  String _sentQuery = '';
+
   void _onChanged(String v) {
     setState(() => _query = v);
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () {
-      if (!mounted) return;
-      setState(() {
-        _future = context.read<ContentRepository>().search(_query, null);
-      });
+    _debounce = Timer(SearchScreen.searchDelay, _send);
+  }
+
+  void _send() {
+    _debounce?.cancel();
+    if (!mounted) return;
+    final q = SearchScreen.normalize(_query);
+    // Too short: keep showing whatever is on screen (trending or the last
+    // results) and send nothing.
+    if (q.isNotEmpty && q.length < SearchScreen.minQueryLength) return;
+    if (q == _sentQuery) return; // e.g. typed a space, or a letter and back
+    _sentQuery = q;
+    setState(() {
+      _future = context.read<ContentRepository>().search(q, null);
     });
   }
 
@@ -58,6 +82,7 @@ class _SearchScreenState extends State<SearchScreen> {
               _SearchBar(
                 controller: _controller,
                 onChanged: _onChanged,
+                onSubmitted: (_) => _send(),
                 onCancel: () => context.pop(),
               ),
               _Segments(
@@ -67,7 +92,10 @@ class _SearchScreenState extends State<SearchScreen> {
                 child: FutureBuilder<List<MediaTitle>>(
                   future: _future,
                   builder: (context, snap) {
-                    if (snap.connectionState != ConnectionState.done) {
+                    // Keep the previous results on screen while the next
+                    // query loads instead of flashing a spinner per word.
+                    if (snap.connectionState != ConnectionState.done &&
+                        !snap.hasData) {
                       return const Center(
                         child: SizedBox(
                           width: 28,
@@ -78,8 +106,14 @@ class _SearchScreenState extends State<SearchScreen> {
                       );
                     }
                     final results = snap.data ?? const <MediaTitle>[];
-                    if (_query.isNotEmpty && results.isEmpty) {
-                      return _NoResults(query: _query);
+                    final typed = SearchScreen.normalize(_query);
+                    if (typed.isNotEmpty && typed.length < SearchScreen.minQueryLength) {
+                      return const _KeepTyping();
+                    }
+                    if (_sentQuery.isNotEmpty &&
+                        results.isEmpty &&
+                        snap.connectionState == ConnectionState.done) {
+                      return _NoResults(query: _query.trim());
                     }
                     return ListView(
                       children: [
@@ -100,10 +134,12 @@ class _SearchScreenState extends State<SearchScreen> {
 class _SearchBar extends StatelessWidget {
   final TextEditingController controller;
   final ValueChanged<String> onChanged;
+  final ValueChanged<String> onSubmitted;
   final VoidCallback onCancel;
   const _SearchBar({
     required this.controller,
     required this.onChanged,
+    required this.onSubmitted,
     required this.onCancel,
   });
   @override
@@ -120,6 +156,8 @@ class _SearchBar extends StatelessWidget {
               controller: controller,
               autofocus: true,
               onChanged: onChanged,
+              onSubmitted: onSubmitted,
+              textInputAction: TextInputAction.search,
               style: AppTextStyles.body,
               cursorColor: AppColors.accent,
               decoration: InputDecoration(
@@ -256,6 +294,18 @@ class _ResultRow extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _KeepTyping extends StatelessWidget {
+  const _KeepTyping();
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.xxl),
+      child: Text('Keep typing…',
+          textAlign: TextAlign.center, style: AppTextStyles.body),
     );
   }
 }

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'api_cache.dart';
+import 'rate_limiter.dart';
 
 /// AniList public GraphQL client (no key required, CORS-enabled).
 /// Primary anime metadata + artwork source per 00-config.json, and the
@@ -12,9 +13,20 @@ import 'api_cache.dart';
 /// Responses route through [ApiCache] when supplied — AniList is generous
 /// but rate-limited, and the For You screen resolves the same ids repeatedly.
 class AniListApi {
-  AniListApi({http.Client? client, ApiCache? cache})
-      : _client = client ?? http.Client(),
-        _cache = cache;
+  AniListApi({http.Client? client, ApiCache? cache, RateLimiter? limiter})
+    : _client = client ?? http.Client(),
+      _cache = cache,
+      limiter =
+          limiter ??
+          RateLimiter(
+            maxRequests: 25,
+            per: const Duration(minutes: 1),
+            maxConcurrent: 3,
+          );
+
+  /// AniList allows 90 requests/minute per IP (temporarily lowered to 30 at
+  /// times); stay under the lower figure. A 429 pauses every request.
+  final RateLimiter limiter;
 
   static const String _endpoint = 'https://graphql.anilist.co';
   final http.Client _client;
@@ -30,8 +42,11 @@ class AniListApi {
   /// POSTs a GraphQL document, optionally served from cache. The cache key is
   /// the query text plus its variables, so different variables never collide.
   Future<String?> _post(
-      String query, Map<String, dynamic> variables, Duration ttl) async {
-    Future<String> fetch() async {
+    String query,
+    Map<String, dynamic> variables,
+    Duration ttl,
+  ) async {
+    Future<String> fetch() => limiter.run(() async {
       final res = await _client
           .post(
             Uri.parse(_endpoint),
@@ -39,11 +54,17 @@ class AniListApi {
             body: jsonEncode({'query': query, 'variables': variables}),
           )
           .timeout(requestTimeout);
+      if (res.statusCode == 429) {
+        limiter.cooldown(
+          retryAfter(res.headers, fallback: const Duration(seconds: 60)),
+        );
+        throw AniListException('HTTP 429 (rate limited)');
+      }
       if (res.statusCode != 200) {
         throw AniListException('HTTP ${res.statusCode}');
       }
       return res.body;
-    }
+    });
 
     try {
       final cache = _cache;
@@ -74,13 +95,18 @@ class AniListApi {
     streamingEpisodes { title thumbnail }
   ''';
 
-  Future<List<AniListMedia>> _page(String query, Map<String, dynamic> variables,
-      {Duration ttl = ttlSearch}) async {
+  Future<List<AniListMedia>> _page(
+    String query,
+    Map<String, dynamic> variables, {
+    Duration ttl = ttlSearch,
+  }) async {
     final raw = await _post(query, variables, ttl);
     if (raw == null) return const [];
     final body = jsonDecode(raw) as Map<String, dynamic>;
-    final media = (((body['data'] as Map<String, dynamic>?)?['Page']
-            as Map<String, dynamic>?)?['media'] as List?) ??
+    final media =
+        (((body['data'] as Map<String, dynamic>?)?['Page']
+                as Map<String, dynamic>?)?['media']
+            as List?) ??
         const [];
     return media
         .cast<Map<String, dynamic>>()
@@ -99,18 +125,18 @@ class AniListApi {
         }
       }
     ''';
-    return _page(
-        query,
-        {
-          'perPage': perPage,
-          if (format != null) 'format': format,
-        },
-        ttl: ttlTrending);
+    return _page(query, {
+      'perPage': perPage,
+      if (format != null) 'format': format,
+    }, ttl: ttlTrending);
   }
 
   /// Full-text search. [format] narrows to 'TV' / 'MOVIE'; null = any.
-  Future<List<AniListMedia>> searchAnime(String search,
-      {int perPage = 25, String? format}) {
+  Future<List<AniListMedia>> searchAnime(
+    String search, {
+    int perPage = 25,
+    String? format,
+  }) {
     const query = '''
       query (\$search: String, \$perPage: Int, \$format: MediaFormat) {
         Page(page: 1, perPage: \$perPage) {
@@ -140,8 +166,9 @@ class AniListApi {
     final raw = await _post(query, {'id': id}, ttlMedia);
     if (raw == null) return null;
     final body = jsonDecode(raw) as Map<String, dynamic>;
-    final media = (body['data'] as Map<String, dynamic>?)?['Media']
-        as Map<String, dynamic>?;
+    final media =
+        (body['data'] as Map<String, dynamic>?)?['Media']
+            as Map<String, dynamic>?;
     return media == null ? null : AniListMedia.fromJson(media);
   }
 }
@@ -213,24 +240,29 @@ class AniListMedia {
       format: j['format'] as String?,
       status: j['status'] as String?,
       episodes: j['episodes'] as int?,
-      startDate: start == null || start['year'] == null
-          ? null
-          : DateTime(
-              start['year'] as int,
-              start['month'] as int? ?? 1,
-              start['day'] as int? ?? 1,
-            ),
+      startDate:
+          start == null || start['year'] == null
+              ? null
+              : DateTime(
+                start['year'] as int,
+                start['month'] as int? ?? 1,
+                start['day'] as int? ?? 1,
+              ),
       nextEpisodeNumber: next?['episode'] as int?,
-      nextEpisodeAiring: airingAt == null
-          ? null
-          : DateTime.fromMillisecondsSinceEpoch(airingAt * 1000),
-      streamingEpisodes: (j['streamingEpisodes'] as List? ?? const [])
-          .cast<Map<String, dynamic>>()
-          .map((e) => AniListStreamingEpisode(
-                title: e['title'] as String? ?? '',
-                thumbnail: e['thumbnail'] as String?,
-              ))
-          .toList(),
+      nextEpisodeAiring:
+          airingAt == null
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(airingAt * 1000),
+      streamingEpisodes:
+          (j['streamingEpisodes'] as List? ?? const [])
+              .cast<Map<String, dynamic>>()
+              .map(
+                (e) => AniListStreamingEpisode(
+                  title: e['title'] as String? ?? '',
+                  thumbnail: e['thumbnail'] as String?,
+                ),
+              )
+              .toList(),
     );
   }
 }

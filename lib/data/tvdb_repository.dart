@@ -518,7 +518,10 @@ class TvdbRepository implements ContentRepository {
 
   @override
   Future<List<MediaTitle>> search(String query, MediaKind? kind) async {
-    if (query.trim().isEmpty) {
+    // One spelling per query, so differently-typed versions of the same
+    // search share a request and a cache entry.
+    query = query.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+    if (query.isEmpty) {
       return trending(kind ?? MediaKind.show);
     }
     if (!tvdb.isConfigured) {
