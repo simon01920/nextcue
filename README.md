@@ -7,8 +7,13 @@ photographic VHS shelf for your collection. Package name: `showtrack`.
 
 ```bash
 flutter pub get
-flutter run -d chrome --dart-define=TVDB_API_KEY=<your key>
+cp .env.example .env          # then fill in TVDB_API_KEY
+tools/firebase_env.sh         # adds the Firebase API keys to .env
+flutter run -d chrome --dart-define-from-file=.env
 ```
+
+`.env` is git-ignored: API keys never go into the repository. A build
+without the Firebase keys runs on on-device accounts.
 
 Without `TVDB_API_KEY` the app falls back to keyless AniList data (and the
 shelf prints tapes from AniList covers and banners). Never commit the key.
@@ -19,13 +24,11 @@ flutter analyze
 flutter test
 ```
 
-### Accounts and cloud sync (Firebase)
+### Accounts and cloud sync
 
-Without Firebase, accounts and tracking data live on the device. Run
-`flutterfire configure` and the app switches to Firebase Auth plus Firestore
-sync of every account's tracking state, with no code edits. Steps, security
-rules, emulators, hosting and the free-tier budget are in
-[`docs/FIREBASE.md`](docs/FIREBASE.md).
+Accounts use Firebase Authentication (email/password and Google), and each
+account's tracking state syncs through Cloud Firestore. Platforms without a
+Firebase config fall back to on-device accounts.
 
 ## The VHS shelf: how it is made
 

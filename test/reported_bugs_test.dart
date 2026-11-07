@@ -191,11 +191,42 @@ void main() {
       await tester.pump(const Duration(seconds: 2));
     });
 
-    testWidgets('watch list exposes the pull-down affordance', (tester) async {
+    testWidgets(
+        'scrolling up from the watch list reveals watched episodes inline',
+        (tester) async {
+      final state = _state();
+      state.setWatched('series-279830:1:1', true);
+      state.setWatched('series-279830:1:2', true);
+      await tester.pumpWidget(
+          _host(const ShowsScreen(tab: 'watchlist'), state: state));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // Opens on the watch list, history hidden above it.
+      expect(find.text('Scroll up for recently watched'), findsOneWidget);
+      expect(find.text('TODAY'), findsNothing);
+
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, 500));
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text('TODAY'), findsOneWidget);
+      expect(find.byType(WatchedEpisodeRow), findsNWidgets(2));
+
+      // Un-watch from the history, then undo.
+      await tester.tap(find.byKey(const ValueKey('unwatch-series-279830:1:2')));
+      await tester.pump();
+      expect(state.isWatched('series-279830:1:2'), isFalse);
+      await tester.pump(const Duration(milliseconds: 600)); // snackbar in
+      await tester.tap(find.text('UNDO'));
+      await tester.pump();
+      expect(state.isWatched('series-279830:1:2'), isTrue);
+      expect(state.watchHistory.first, 'series-279830:1:2',
+          reason: 'undo restores the original position');
+      await tester.pump(const Duration(seconds: 5));
+    });
+
+    testWidgets('no history: no scroll-up hint', (tester) async {
       await tester.pumpWidget(_host(const ShowsScreen(tab: 'watchlist')));
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.text('Pull down for watch history'), findsOneWidget);
-      expect(find.byType(OverscrollReveal), findsOneWidget);
+      expect(find.text('Scroll up for recently watched'), findsNothing);
     });
   });
 

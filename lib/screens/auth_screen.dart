@@ -70,12 +70,40 @@ class _AuthScreenState extends State<AuthScreen> {
     try {
       await context.read<AuthController>().sendPasswordReset(email);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('If an account exists for $email, '
-                'a reset link is on its way.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'If an account exists for $email, '
+              'a reset link is on its way.',
+            ),
+          ),
+        );
       }
     } on AuthException catch (e) {
       if (mounted) setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _google() => _provider((a) => a.signInWithGoogle());
+
+  Future<void> _apple() => _provider((a) => a.signInWithApple());
+
+  Future<void> _provider(Future<void> Function(AuthController) signIn) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await signIn(context.read<AuthController>());
+    } on AuthCancelled {
+      // Closed the picker: stay on the screen without an error.
+    } on AuthException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Something went wrong. Try again.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -126,68 +154,129 @@ class _AuthScreenState extends State<AuthScreen> {
                 const SizedBox(height: AppSpacing.xxl),
                 _Tabs(
                   register: _register,
-                  onChanged: (v) => setState(() {
-                    _register = v;
-                    _error = null;
-                  }),
+                  onChanged:
+                      (v) => setState(() {
+                        _register = v;
+                        _error = null;
+                      }),
                 ),
                 const SizedBox(height: AppSpacing.xl),
                 if (_register) ...[
                   _Field(
-                      controller: _name,
-                      hint: 'Display name',
-                      icon: Icons.person_outline),
+                    controller: _name,
+                    hint: 'Display name',
+                    icon: Icons.person_outline,
+                  ),
                   const SizedBox(height: AppSpacing.md),
                 ],
                 _Field(
-                    controller: _email,
-                    hint: 'Email',
-                    icon: Icons.mail_outline,
-                    keyboardType: TextInputType.emailAddress),
+                  controller: _email,
+                  hint: 'Email',
+                  icon: Icons.mail_outline,
+                  keyboardType: TextInputType.emailAddress,
+                ),
                 const SizedBox(height: AppSpacing.md),
                 _Field(
-                    controller: _password,
-                    hint: 'Password',
-                    icon: Icons.lock_outline,
-                    obscure: true,
-                    onSubmitted: (_) => _submit()),
+                  controller: _password,
+                  hint: 'Password',
+                  icon: Icons.lock_outline,
+                  obscure: true,
+                  onSubmitted: (_) => _submit(),
+                ),
                 if (!_register &&
                     context.read<AuthController>().supportsPasswordReset)
                   Align(
                     alignment: Alignment.centerRight,
                     child: TextButton(
                       onPressed: _busy ? null : _forgot,
-                      child: Text('Forgot password?',
-                          style: AppTextStyles.linkText),
+                      child: Text(
+                        'Forgot password?',
+                        style: AppTextStyles.linkText,
+                      ),
                     ),
                   ),
                 if (_error != null) ...[
                   const SizedBox(height: AppSpacing.md),
-                  Text(_error!,
-                      style: AppTextStyles.subtitle
-                          .copyWith(color: AppColors.error)),
+                  Text(
+                    _error!,
+                    style: AppTextStyles.subtitle.copyWith(
+                      color: AppColors.error,
+                    ),
+                  ),
                 ],
                 const SizedBox(height: AppSpacing.xl),
                 _busy
                     ? const Center(
-                        child: SizedBox(
-                          width: 28,
-                          height: 28,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 3, color: AppColors.accent),
+                      child: SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          color: AppColors.accent,
                         ),
-                      )
-                    : BrandButton(
-                        label: _register ? 'CREATE ACCOUNT' : 'LOG IN',
-                        onTap: _submit,
                       ),
+                    )
+                    : BrandButton(
+                      label: _register ? 'CREATE ACCOUNT' : 'LOG IN',
+                      onTap: _submit,
+                    ),
+                if (context.read<AuthController>().supportsApple) ...[
+                  const SizedBox(height: AppSpacing.md),
+                  FilledButton.icon(
+                    key: const Key('appleSignIn'),
+                    onPressed: _busy ? null : _apple,
+                    icon: const Icon(Icons.apple, size: 22),
+                    label: Text(
+                      'CONTINUE WITH APPLE',
+                      style: AppTextStyles.buttonPillCaps.copyWith(
+                        color: AppColors.isLight ? Colors.white : Colors.black,
+                      ),
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor:
+                          AppColors.isLight ? Colors.black : Colors.white,
+                      foregroundColor:
+                          AppColors.isLight ? Colors.white : Colors.black,
+                      padding: const EdgeInsets.symmetric(
+                        vertical: AppSpacing.lg,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                      ),
+                    ),
+                  ),
+                ],
+                if (context.read<AuthController>().supportsGoogle) ...[
+                  const SizedBox(height: AppSpacing.md),
+                  OutlinedButton.icon(
+                    key: const Key('googleSignIn'),
+                    onPressed: _busy ? null : _google,
+                    icon: const _GoogleG(),
+                    label: Text(
+                      'CONTINUE WITH GOOGLE',
+                      style: AppTextStyles.buttonPillCaps.copyWith(
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: AppColors.borderSubtle),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: AppSpacing.lg,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: AppSpacing.lg),
                 Center(
                   child: GestureDetector(
-                    onTap: () => setState(() {
-                      _register = !_register;
-                      _error = null;
-                    }),
+                    onTap:
+                        () => setState(() {
+                          _register = !_register;
+                          _error = null;
+                        }),
                     child: Text(
                       _register
                           ? 'Already have an account?  Log in'
@@ -202,14 +291,18 @@ class _AuthScreenState extends State<AuthScreen> {
                   style: OutlinedButton.styleFrom(
                     side: BorderSide(color: AppColors.borderSubtle),
                     padding: const EdgeInsets.symmetric(
-                        vertical: AppSpacing.lg),
+                      vertical: AppSpacing.lg,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(AppRadius.pill),
                     ),
                   ),
-                  child: Text('TRY THE DEMO',
-                      style: AppTextStyles.buttonPillCaps
-                          .copyWith(color: AppColors.textPrimary)),
+                  child: Text(
+                    'TRY THE DEMO',
+                    style: AppTextStyles.buttonPillCaps.copyWith(
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 Center(
@@ -246,15 +339,15 @@ class _Tabs extends StatelessWidget {
                 child: Text(
                   label,
                   textAlign: TextAlign.center,
-                  style: active
-                      ? AppTextStyles.tabLabelActive
-                      : AppTextStyles.tabLabel,
+                  style:
+                      active
+                          ? AppTextStyles.tabLabelActive
+                          : AppTextStyles.tabLabel,
                 ),
               ),
               Container(
                 height: 3,
-                color:
-                    active ? AppColors.accent : Colors.transparent,
+                color: active ? AppColors.accent : Colors.transparent,
               ),
             ],
           ),
@@ -305,8 +398,9 @@ class _Field extends StatelessWidget {
               decoration: InputDecoration(
                 border: InputBorder.none,
                 hintText: hint,
-                hintStyle:
-                    AppTextStyles.body.copyWith(color: AppColors.textMuted),
+                hintStyle: AppTextStyles.body.copyWith(
+                  color: AppColors.textMuted,
+                ),
               ),
             ),
           ),
@@ -314,4 +408,66 @@ class _Field extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The four-colour Google "G", drawn so no image asset is needed.
+class _GoogleG extends StatelessWidget {
+  const _GoogleG();
+  @override
+  Widget build(BuildContext context) => const SizedBox(
+    width: 18,
+    height: 18,
+    child: CustomPaint(painter: _GPainter()),
+  );
+}
+
+class _GPainter extends CustomPainter {
+  const _GPainter();
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width;
+    final stroke = s * 0.2;
+    final rect = Rect.fromLTWH(stroke / 2, stroke / 2, s - stroke, s - stroke);
+    Paint p(Color c) =>
+        Paint()
+          ..color = c
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = stroke;
+    const deg = 3.14159265 / 180;
+    canvas.drawArc(
+      rect,
+      -40 * deg,
+      -100 * deg,
+      false,
+      p(const Color(0xFFEA4335)),
+    );
+    canvas.drawArc(
+      rect,
+      -140 * deg,
+      -90 * deg,
+      false,
+      p(const Color(0xFFFBBC05)),
+    );
+    canvas.drawArc(
+      rect,
+      130 * deg,
+      -90 * deg,
+      false,
+      p(const Color(0xFF34A853)),
+    );
+    canvas.drawArc(
+      rect,
+      40 * deg,
+      -40 * deg,
+      false,
+      p(const Color(0xFF4285F4)),
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(s / 2, s / 2 - stroke / 2, s / 2 - stroke / 4, stroke),
+      Paint()..color = const Color(0xFF4285F4),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

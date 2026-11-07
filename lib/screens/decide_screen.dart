@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui' as ui show Image;
+import 'dart:ui' as ui show Image, Gradient;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
@@ -28,8 +28,16 @@ class DecideScreen extends StatefulWidget {
 
 class _DecideScreenState extends State<DecideScreen> {
   Future<List<WatchlistEntry>>? _future;
-  MediaTitle? _result;
+  WatchlistEntry? _result;
   int _round = 0;
+
+  /// Shows with an episode ready to watch. Caught-up shows only join in
+  /// when fewer than two are ready, so the wheel never picks a show with
+  /// nothing to play.
+  static List<WatchlistEntry> _candidates(List<WatchlistEntry> all) {
+    final ready = all.where((e) => e.upNext != null).toList();
+    return ready.length >= 2 ? ready : all;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -49,25 +57,27 @@ class _DecideScreenState extends State<DecideScreen> {
                 ),
               );
             }
-            final titles = snap.data!.map((e) => e.title).toList();
+            final entries = _candidates(snap.data!);
+            final titles = entries.map((e) => e.title).toList();
             return Stack(
               children: [
                 Column(
                   children: [
                     _Header(onClose: () => context.pop()),
-                    Expanded(child: _mode(titles)),
+                    Expanded(child: _mode(entries)),
                   ],
                 ),
                 if (_result != null)
                   _ResultOverlay(
-                    title: _result!,
+                    key: ValueKey('result$_round'),
+                    entry: _result!,
                     again: titles.length == 2
                         ? 'FLIP AGAIN'
                         : titles.length <= 8
                             ? 'SPIN AGAIN'
                             : 'ROLL AGAIN',
                     onWatch: () {
-                      final t = _result!;
+                      final t = _result!.title;
                       context.pushReplacement(
                           '/${t.kind == MediaKind.movie ? 'movie' : 'series'}/${t.id}');
                     },
@@ -84,8 +94,10 @@ class _DecideScreenState extends State<DecideScreen> {
     );
   }
 
-  Widget _mode(List<MediaTitle> titles) {
-    void done(MediaTitle t) => setState(() => _result = t);
+  Widget _mode(List<WatchlistEntry> entries) {
+    final titles = entries.map((e) => e.title).toList();
+    void done(MediaTitle t) => setState(
+        () => _result = entries.firstWhere((e) => identical(e.title, t)));
     if (titles.length < 2) {
       return Center(
         child: Text(
@@ -132,10 +144,14 @@ class _Header extends StatelessWidget {
 }
 
 /// Resolves a network poster into a raw [ui.Image] for canvas painting.
-Future<ui.Image?> _loadUiImage(String? url) {
+Future<ui.Image?> _loadUiImage(String? url, {int? width}) {
   if (url == null || !url.startsWith('http')) return Future.value(null);
   final completer = Completer<ui.Image?>();
-  final stream = NetworkImage(url).resolve(ImageConfiguration.empty);
+  final ImageProvider provider = width == null
+      ? NetworkImage(url)
+      : ResizeImage(NetworkImage(url),
+          width: width, policy: ResizeImagePolicy.fit);
+  final stream = provider.resolve(ImageConfiguration.empty);
   late ImageStreamListener listener;
   listener = ImageStreamListener(
     (info, _) {
@@ -168,22 +184,42 @@ class _WheelDecider extends StatefulWidget {
 }
 
 class _WheelDeciderState extends State<_WheelDecider>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  late Animation<double> _rotation;
+    with TickerProviderStateMixin {
+  late final AnimationController _spinCtrl;
+  late final AnimationController _glowCtrl;
   late final List<ui.Image?> _posters;
+  late final List<String> _labels;
+  final _random = math.Random();
+
+  /// Wheel rotation in radians. Kept continuous across spins and drags so
+  /// the wheel never snaps back to zero.
+  double _angle = 0;
+  double _from = 0, _to = 0;
   int? _chosen;
   bool _spinning = false;
+
+  // Drag-to-spin.
+  double? _dragAngle;
+  final List<(Duration, double)> _dragSamples = [];
+
+  // Ticker pointer: a flap kick each time a segment boundary passes under it.
+  int _lastSegment = 0;
+  DateTime _lastTick = DateTime.fromMillisecondsSinceEpoch(0);
+  final ValueNotifier<double> _flap = ValueNotifier(0);
+
+  double get _sweep => 2 * math.pi / widget.titles.length;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 4600));
-    _rotation = const AlwaysStoppedAnimation(0);
+    _labels = widget.titles.map((t) => t.name).toList(growable: false);
+    _spinCtrl = AnimationController(vsync: this)..addListener(_onSpinFrame);
+    _glowCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 900));
     _posters = List.filled(widget.titles.length, null);
     for (var i = 0; i < widget.titles.length; i++) {
-      _loadUiImage(widget.titles[i].poster).then((img) {
+      // Decoded at wheel size, not the full ~680x1000 poster.
+      _loadUiImage(widget.titles[i].poster, width: 360).then((img) {
         if (img == null) return;
         if (!mounted) {
           img.dispose();
@@ -194,30 +230,116 @@ class _WheelDeciderState extends State<_WheelDecider>
     }
   }
 
-  void _spin() {
+  /// Segment index under the top pointer for wheel rotation [a].
+  int _segmentAt(double a) {
+    final n = widget.titles.length;
+    final t = (-a) % (2 * math.pi);
+    return (t / _sweep).floor() % n;
+  }
+
+  void _setAngle(double a) {
+    _angle = a;
+    final seg = _segmentAt(a);
+    if (seg != _lastSegment) {
+      _lastSegment = seg;
+      final now = DateTime.now();
+      // Haptic tick per segment, rate-limited so a fast spin buzzes rather
+      // than stutters.
+      if (now.difference(_lastTick) > const Duration(milliseconds: 45)) {
+        HapticFeedback.selectionClick();
+        _lastTick = now;
+      }
+      _flap.value = 1;
+    } else {
+      _flap.value = math.max(0, _flap.value - 0.18);
+    }
+  }
+
+  void _onSpinFrame() {
+    final t = _curve.transform(_spinCtrl.value);
+    setState(() => _setAngle(_from + (_to - _from) * t));
+  }
+
+  // Fast start, long smooth deceleration, tiny settle at the end.
+  static const Curve _curve = Cubic(0.12, 0.72, 0.18, 1.0);
+
+  void _spin({double velocity = 0}) {
     if (_spinning) return;
     final n = widget.titles.length;
-    final sweep = 2 * math.pi / n;
-    final i = math.Random().nextInt(n);
-    // Land segment i's center under the top pointer after 5 full turns.
-    final target = 5 * 2 * math.pi - (i * sweep + sweep / 2);
-    _rotation = Tween<double>(begin: 0, end: target).animate(
-        CurvedAnimation(parent: _ctrl, curve: Curves.easeOutQuart));
+    final i = _random.nextInt(n);
+    // Land somewhere inside the segment, not dead centre every time
+    // (which reads as rigged).
+    final f = 0.18 + _random.nextDouble() * 0.64;
+    final desired = (-(i + f) * _sweep) % (2 * math.pi);
+    final current = _angle % (2 * math.pi);
+    var delta = (desired - current) % (2 * math.pi);
+    // A harder flick spins more turns.
+    final turns = 4 + (velocity.abs() / 6).clamp(0, 3).round();
+    delta += turns * 2 * math.pi;
+
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    _from = _angle;
+    _to = _angle + delta;
+    _spinCtrl.duration = reduceMotion
+        ? const Duration(milliseconds: 900)
+        : Duration(milliseconds: 4200 + turns * 150);
     setState(() {
       _chosen = i;
       _spinning = true;
     });
-    HapticFeedback.selectionClick();
-    _ctrl.forward(from: 0).whenComplete(() async {
+    HapticFeedback.mediumImpact();
+    _spinCtrl.forward(from: 0).whenComplete(() async {
+      if (!mounted) return;
+      _flap.value = 0;
       HapticFeedback.heavyImpact();
-      await Future<void>.delayed(const Duration(milliseconds: 650));
-      if (mounted) widget.onDone(widget.titles[i]);
+      _glowCtrl.repeat(reverse: true);
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+      if (!mounted) return;
+      _glowCtrl.stop();
+      widget.onDone(widget.titles[i]);
     });
+  }
+
+  double _angleOf(Offset local, Size size) =>
+      math.atan2(local.dy - size.height / 2, local.dx - size.width / 2);
+
+  void _onPanStart(DragStartDetails d, Size size) {
+    if (_spinning) return;
+    _dragAngle = _angleOf(d.localPosition, size);
+    _dragSamples.clear();
+  }
+
+  void _onPanUpdate(DragUpdateDetails d, Size size) {
+    if (_spinning || _dragAngle == null) return;
+    final a = _angleOf(d.localPosition, size);
+    var da = a - _dragAngle!;
+    if (da > math.pi) da -= 2 * math.pi;
+    if (da < -math.pi) da += 2 * math.pi;
+    _dragAngle = a;
+    _dragSamples.add((d.sourceTimeStamp ?? Duration.zero, da));
+    if (_dragSamples.length > 6) _dragSamples.removeAt(0);
+    setState(() => _setAngle(_angle + da));
+  }
+
+  void _onPanEnd(DragEndDetails d) {
+    if (_spinning || _dragAngle == null) return;
+    _dragAngle = null;
+    // Angular velocity from the last few samples (rad/s).
+    double v = 0;
+    if (_dragSamples.length >= 2) {
+      final dt = (_dragSamples.last.$1 - _dragSamples.first.$1).inMicroseconds /
+          1e6;
+      final sum = _dragSamples.fold<double>(0, (s, e) => s + e.$2);
+      if (dt > 0) v = sum / dt;
+    }
+    if (v.abs() > 3) _spin(velocity: v);
   }
 
   @override
   void dispose() {
-    _ctrl.dispose();
+    _spinCtrl.dispose();
+    _glowCtrl.dispose();
+    _flap.dispose();
     for (final p in _posters) {
       p?.dispose();
     }
@@ -229,45 +351,85 @@ class _WheelDeciderState extends State<_WheelDecider>
     return LayoutBuilder(
       builder: (context, box) {
         final size = math.min(
-            math.min(box.maxWidth - AppSpacing.xxl * 2, box.maxHeight - 140),
-            380.0);
+            math.min(box.maxWidth - AppSpacing.xl * 2, box.maxHeight - 170),
+            400.0);
+        final wheelSize = Size.square(size - 8);
+        final landed = _spinning && _spinCtrl.isCompleted;
         return Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            Text(
+              _spinning
+                  ? (landed ? 'AND THE PICK IS…' : 'SPINNING…')
+                  : 'FLICK THE WHEEL OR TAP SPIN',
+              style: AppTextStyles.captionCaps,
+            ),
+            const SizedBox(height: AppSpacing.lg),
             SizedBox(
-              width: size + 24,
-              height: size + 24,
+              width: size + 28,
+              height: size + 28,
               child: Stack(
                 alignment: Alignment.center,
                 clipBehavior: Clip.none,
                 children: [
-                  _GlassCircle(diameter: size + 24),
-                  AnimatedBuilder(
-                    animation: _ctrl,
-                    builder: (context, _) => Transform.rotate(
-                      angle: _rotation.value,
-                      child: CustomPaint(
-                        size: Size.square(size - 8),
-                        painter: _WheelPainter(
-                          labels: widget.titles.map((t) => t.name).toList(),
-                          posters: _posters,
-                          highlight: _spinning && _ctrl.isCompleted
-                              ? _chosen
-                              : null,
+                  _GlassCircle(diameter: size + 28),
+                  // Rim studs, like a fairground wheel.
+                  IgnorePointer(
+                    child: CustomPaint(
+                      size: Size.square(size + 28),
+                      painter: _RimPainter(count: widget.titles.length * 3),
+                    ),
+                  ),
+                  GestureDetector(
+                    onPanStart: (d) => _onPanStart(d, wheelSize),
+                    onPanUpdate: (d) => _onPanUpdate(d, wheelSize),
+                    onPanEnd: _onPanEnd,
+                    child: Transform.rotate(
+                      angle: _angle,
+                      // The wheel art is painted once and cached as a layer;
+                      // spinning only rotates it.
+                      child: RepaintBoundary(
+                        child: AnimatedBuilder(
+                          animation: _glowCtrl,
+                          builder: (context, _) => CustomPaint(
+                            size: wheelSize,
+                            painter: _WheelPainter(
+                              labels: _labels,
+                              posters: List.unmodifiable(_posters),
+                              highlight: landed ? _chosen : null,
+                              glow: landed ? _glowCtrl.value : 0,
+                            ),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                  _GlassCircle(
-                    diameter: size * 0.20,
-                    child: const Icon(Icons.casino,
-                        color: AppColors.accentAlt, size: 26),
+                  // Hub doubles as a spin button.
+                  GestureDetector(
+                    onTap: _spinning ? null : () => _spin(),
+                    child: _GlassCircle(
+                      diameter: size * 0.22,
+                      child: Icon(Icons.casino,
+                          color: _spinning
+                              ? AppColors.textDisabled
+                              : AppColors.accentAlt,
+                          size: 26),
+                    ),
                   ),
                   Positioned(
-                    top: -6,
-                    child: CustomPaint(
-                      size: const Size(26, 30),
-                      painter: _PointerPainter(),
+                    top: -10,
+                    child: ValueListenableBuilder<double>(
+                      valueListenable: _flap,
+                      builder: (context, flap, child) => Transform.rotate(
+                        // Kicks against the direction of travel, springs back.
+                        angle: -0.45 * flap,
+                        alignment: const Alignment(0, -0.6),
+                        child: child,
+                      ),
+                      child: CustomPaint(
+                        size: const Size(30, 38),
+                        painter: _PointerPainter(),
+                      ),
                     ),
                   ),
                 ],
@@ -278,7 +440,7 @@ class _WheelDeciderState extends State<_WheelDecider>
               width: 220,
               child: BrandButton(
                 label: _spinning ? 'SPINNING…' : 'SPIN',
-                onTap: _spinning ? null : _spin,
+                onTap: _spinning ? null : () => _spin(),
               ),
             ),
           ],
@@ -288,17 +450,19 @@ class _WheelDeciderState extends State<_WheelDecider>
   }
 }
 
-/// Poster-art segments under a ~50% black scrim so the wrapped 2-line
-/// labels stay readable; falls back to alternating red/smoked fills while
-/// artwork loads.
+/// Poster-art segments under a scrim so the wrapped 2-line labels stay
+/// readable; alternating red/smoked fills while artwork loads. Labels are
+/// laid out once per size, not per frame.
 class _WheelPainter extends CustomPainter {
   final List<String> labels;
   final List<ui.Image?> posters;
   final int? highlight;
+  final double glow;
   _WheelPainter({
     required this.labels,
     required this.posters,
     this.highlight,
+    this.glow = 0,
   });
 
   static const _reds = [AppColors.accent, Color(0xFF8F0008)];
@@ -318,103 +482,174 @@ class _WheelPainter extends CustomPainter {
         ..arcTo(rect, start, sweep, false)
         ..close();
       final img = i < posters.length ? posters[i] : null;
+      final dim = highlight != null && highlight != i;
       canvas.save();
       canvas.clipPath(sector);
       if (img != null) {
-        // Cover-fit the poster into the sector's bounding box.
-        final bbox = sector.getBounds();
-        final scale = math.max(
-            bbox.width / img.width, bbox.height / img.height);
+        // Cover the sector with the poster, centred along the segment's
+        // bisector so the art's subject sits in the slice.
+        final mid = start + sweep / 2;
+        final c = center + Offset(math.cos(mid), math.sin(mid)) * radius * 0.55;
+        final box = radius * (n <= 4 ? 1.3 : 1.0);
+        final scale = math.max(box / img.width, box / img.height);
         final dst = Rect.fromCenter(
-          center: bbox.center,
-          width: img.width * scale,
-          height: img.height * scale,
-        );
+            center: c, width: img.width * scale, height: img.height * scale);
         canvas.drawImageRect(
           img,
           Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
           dst,
           Paint()..filterQuality = FilterQuality.medium,
         );
-        // Readability scrim over the artwork.
-        canvas.drawRect(bbox, Paint()..color = const Color(0x80000000));
+        // Radial scrim: darker toward the rim where the label sits.
+        canvas.drawRect(
+          rect,
+          Paint()
+            ..shader = ui.Gradient.radial(center, radius, const [
+              Color(0x33000000),
+              Color(0x99000000),
+            ]),
+        );
       } else {
         final fill = i.isEven
             ? _reds[(i ~/ 2).isEven ? 0 : 1]
             : AppColors.surfaceElevated;
         canvas.drawPath(sector, Paint()..color = fill);
       }
+      if (dim) {
+        canvas.drawRect(rect, Paint()..color = const Color(0x8C000000));
+      }
       canvas.restore();
-      canvas.drawArc(
-        rect,
-        start,
-        sweep,
-        true,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5
-          ..color = const Color(0x40FFFFFF),
-      );
+      // Segment dividers.
+      final edge = center + Offset(math.cos(start), math.sin(start)) * radius;
+      canvas.drawLine(
+          center,
+          edge,
+          Paint()
+            ..strokeWidth = 2
+            ..color = const Color(0x59FFFFFF));
     }
 
     if (highlight != null) {
       final start = -math.pi / 2 + highlight! * sweep;
       canvas.drawArc(
-        rect.deflate(1),
+        rect.deflate(2),
         start,
         sweep,
         true,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 4
-          ..color = Colors.white
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+          ..strokeWidth = 3 + 3 * glow
+          ..color = Color.lerp(Colors.white70, Colors.white, glow)!
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 3 + 6 * glow),
       );
     }
 
-    // Radial labels, wrapped to two lines like Excel cell wrap.
+    // Outer rim line.
+    canvas.drawCircle(
+        center,
+        radius - 1,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
+          ..color = const Color(0x66FFFFFF));
+
+    // Radial labels, two lines max, reading outward from the hub.
+    final labelWidth = radius * 0.56;
     for (var i = 0; i < n; i++) {
       final angle = -math.pi / 2 + i * sweep + sweep / 2;
+      final tp = _label(labels[i], n, labelWidth);
       canvas.save();
       canvas.translate(center.dx, center.dy);
       canvas.rotate(angle);
-      final tp = TextPainter(
-        text: TextSpan(
-          text: labels[i],
-          style: AppTextStyles.microCaps.copyWith(
-            color: Colors.white,
-            fontSize: n > 6 ? 10 : 11,
-            letterSpacing: 0.2,
-            height: 1.25,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        maxLines: 2,
-        ellipsis: '…',
-        textDirection: TextDirection.ltr,
-      )..layout(maxWidth: radius * 0.52);
-      tp.paint(canvas, Offset(radius * 0.32, -tp.height / 2));
+      tp.paint(canvas, Offset(radius * 0.30, -tp.height / 2));
       canvas.restore();
     }
   }
 
+  static final Map<String, TextPainter> _labelCache = {};
+
+  static TextPainter _label(String text, int n, double width) {
+    final key = '$text|$n|${width.round()}';
+    return _labelCache[key] ??= TextPainter(
+      text: TextSpan(
+        text: text.toUpperCase(),
+        style: AppTextStyles.microCaps.copyWith(
+          color: Colors.white,
+          fontSize: n > 6 ? 10 : 11.5,
+          letterSpacing: 0.4,
+          height: 1.2,
+          fontWeight: FontWeight.w800,
+          shadows: const [Shadow(color: Color(0xCC000000), blurRadius: 4)],
+        ),
+      ),
+      maxLines: 2,
+      ellipsis: '…',
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: width);
+  }
+
   @override
   bool shouldRepaint(_WheelPainter old) =>
-      old.labels != labels ||
       old.highlight != highlight ||
-      old.posters != posters;
+      old.glow != glow ||
+      !_sameImages(old.posters, posters) ||
+      !identical(old.labels, labels);
+
+  static bool _sameImages(List<ui.Image?> a, List<ui.Image?> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!identical(a[i], b[i])) return false;
+    }
+    return true;
+  }
 }
 
+/// Small lamp studs around the rim.
+class _RimPainter extends CustomPainter {
+  final int count;
+  _RimPainter({required this.count});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final r = size.width / 2 - 7;
+    for (var i = 0; i < count; i++) {
+      final a = 2 * math.pi * i / count;
+      final p = c + Offset(math.cos(a), math.sin(a)) * r;
+      canvas.drawCircle(
+          p,
+          2.4,
+          Paint()
+            ..color = i.isEven ? const Color(0xE6FFFFFF) : const Color(0x80FF3B30)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RimPainter old) => old.count != count;
+}
+
+/// Ticker flap: a rounded red pointer with a white pin.
 class _PointerPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
     final path = Path()
-      ..moveTo(0, 0)
-      ..lineTo(size.width, 0)
-      ..lineTo(size.width / 2, size.height)
+      ..moveTo(w * 0.5, h)
+      ..cubicTo(w * 0.2, h * 0.62, 0, h * 0.42, 0, h * 0.3)
+      ..arcToPoint(Offset(w, h * 0.3), radius: Radius.circular(w / 2))
+      ..cubicTo(w, h * 0.42, w * 0.8, h * 0.62, w * 0.5, h)
       ..close();
-    canvas.drawShadow(path, AppColors.love, 6, false);
-    canvas.drawPath(path, Paint()..color = AppColors.love);
+    canvas.drawShadow(path, Colors.black, 4, false);
+    canvas.drawPath(
+        path,
+        Paint()
+          ..shader = ui.Gradient.linear(Offset.zero, Offset(0, h), const [
+            Color(0xFFFF4D45),
+            AppColors.love,
+          ]));
+    canvas.drawCircle(Offset(w / 2, h * 0.3), w * 0.16,
+        Paint()..color = Colors.white);
   }
 
   @override
@@ -451,7 +686,25 @@ class _ReelDeciderState extends State<_ReelDecider> {
   @override
   void initState() {
     super.initState();
-    _scroll = ScrollController(initialScrollOffset: _n * 2 * _extent);
+    _scroll = ScrollController(initialScrollOffset: _n * 2 * _extent)
+      ..addListener(_tick);
+  }
+
+  int _lastCard = -1;
+  DateTime _lastTick = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// A haptic tick as each card crosses the centre frame (rate-limited so
+  /// the fast start buzzes and the slow finish clicks).
+  void _tick() {
+    if (!_spinning || _viewportW == 0) return;
+    final card = ((_scroll.offset + _viewportW / 2) / _extent).floor();
+    if (card == _lastCard) return;
+    _lastCard = card;
+    final now = DateTime.now();
+    if (now.difference(_lastTick) > const Duration(milliseconds: 45)) {
+      HapticFeedback.selectionClick();
+      _lastTick = now;
+    }
   }
 
   Future<void> _spin() async {
@@ -467,9 +720,12 @@ class _ReelDeciderState extends State<_ReelDecider> {
     HapticFeedback.selectionClick();
     await _scroll.animateTo(
       target,
-      duration: const Duration(milliseconds: 4200),
-      curve: Curves.easeOutQuart,
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? const Duration(milliseconds: 900)
+          : const Duration(milliseconds: 4200),
+      curve: const Cubic(0.12, 0.72, 0.18, 1.0),
     );
+    if (!mounted) return;
     HapticFeedback.heavyImpact();
     setState(() => _landedIndex = targetIndex);
     await Future<void>.delayed(const Duration(milliseconds: 700));
@@ -600,9 +856,9 @@ class _ReelCard extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
+              // The name is overlaid below, so no placeholder label.
               Poster(
                 imageAsset: title.poster,
-                label: title.name,
                 radius: 0,
                 fit: BoxFit.cover,
               ),
@@ -767,11 +1023,7 @@ class _CoinFace extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Poster(
-              imageAsset: title.poster,
-              label: title.name,
-              fit: BoxFit.cover,
-            ),
+            Poster(imageAsset: title.poster, fit: BoxFit.cover),
             const DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -843,12 +1095,13 @@ class _GlassCircle extends StatelessWidget {
 }
 
 class _ResultOverlay extends StatelessWidget {
-  final MediaTitle title;
+  final WatchlistEntry entry;
   final String again;
   final VoidCallback onWatch;
   final VoidCallback onAgain;
   const _ResultOverlay({
-    required this.title,
+    super.key,
+    required this.entry,
     required this.again,
     required this.onWatch,
     required this.onAgain,
@@ -856,11 +1109,23 @@ class _ResultOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final title = entry.title;
+    final ep = entry.upNext;
     return Positioned.fill(
-      child: ColoredBox(
-        color: AppColors.overlayScrim,
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+        builder: (context, t, child) => ColoredBox(
+          color: AppColors.overlayScrim.withValues(
+              alpha: AppColors.overlayScrim.a * t),
+          child: Opacity(
+            opacity: t,
+            child: Transform.scale(scale: 0.92 + 0.08 * t, child: child),
+          ),
+        ),
         child: Center(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.all(AppSpacing.xl),
             child: GlassSurface(
               shadow: true,
@@ -868,20 +1133,51 @@ class _ResultOverlay extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('TONIGHT YOU\'RE WATCHING',
+                  Text("TONIGHT YOU'RE WATCHING",
                       style: AppTextStyles.captionCaps),
                   const SizedBox(height: AppSpacing.lg),
-                  Poster(
-                    width: 160,
-                    height: 235,
-                    radius: AppRadius.lg,
-                    imageAsset: title.poster,
-                    label: title.name,
+                  // Poster pops in a beat after the card.
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0.8, end: 1),
+                    duration: const Duration(milliseconds: 600),
+                    curve: AppMotion.pop,
+                    builder: (context, s, child) =>
+                        Transform.scale(scale: s, child: child),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.accent.withValues(alpha: 0.45),
+                            blurRadius: 32,
+                          ),
+                        ],
+                      ),
+                      child: Poster(
+                        width: 160,
+                        height: 235,
+                        radius: AppRadius.lg,
+                        imageAsset: title.poster,
+                        label: title.name,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: AppSpacing.lg),
                   Text(title.name,
                       textAlign: TextAlign.center,
                       style: AppTextStyles.sectionHeader),
+                  if (ep != null) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      'S${ep.season.toString().padLeft(2, '0')} | '
+                      'E${ep.number.toString().padLeft(2, '0')}'
+                      '${ep.title.isEmpty ? '' : '  ·  ${ep.title}'}',
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.subtitle,
+                    ),
+                  ],
                   const SizedBox(height: AppSpacing.xl),
                   SizedBox(
                     width: 240,

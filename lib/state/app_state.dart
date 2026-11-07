@@ -393,6 +393,21 @@ class AppState extends ChangeNotifier {
         }
       });
 
+  /// Undo for an un-watch: marks [episodeId] watched again with its
+  /// original timestamp, so it returns to the same place in the history.
+  void restoreWatched(String episodeId, DateTime? at) =>
+      _mutate(_watchKeys, () {
+        _addWatched(episodeId);
+        if (at == null) {
+          _stampLastWatched(episodeId);
+          return;
+        }
+        final ms = at.millisecondsSinceEpoch;
+        _watchedAt[episodeId] = ms;
+        final t = _titleOf(episodeId);
+        if ((_lastWatchedAt[t] ?? 0) < ms) _lastWatchedAt[t] = ms;
+      });
+
   /// When a specific episode was marked watched (null if never / legacy).
   DateTime? watchedAt(String episodeId) {
     final ms = _watchedAt[episodeId];

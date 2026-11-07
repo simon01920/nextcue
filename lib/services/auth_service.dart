@@ -3,7 +3,10 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter/foundation.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'auth_provider_config.dart';
 
 /// A signed-in Bingely account.
 @immutable
@@ -11,8 +14,11 @@ class Account {
   final String uid;
   final String email;
   final String displayName;
-  const Account(
-      {required this.uid, required this.email, required this.displayName});
+  const Account({
+    required this.uid,
+    required this.email,
+    required this.displayName,
+  });
 }
 
 abstract class AuthService {
@@ -26,6 +32,26 @@ abstract class AuthService {
 
   Future<void> sendPasswordReset(String email) async =>
       throw AuthException('Password reset needs an online account.');
+
+  /// Whether [signInWithGoogle] is available (Firebase-backed only).
+  bool get supportsGoogle => false;
+
+  /// Signs in with a Google account. Throws [AuthCancelled] when the user
+  /// closes the account picker.
+  Future<Account> signInWithGoogle() async =>
+      throw AuthException('Google sign-in needs an online account.');
+
+  /// Whether [signInWithApple] is offered (Firebase-backed, and enabled in
+  /// auth_provider_config.dart once Apple is configured).
+  bool get supportsApple => false;
+
+  Future<Account> signInWithApple() async =>
+      throw AuthException('Apple sign-in needs an online account.');
+}
+
+/// The user dismissed a sign-in prompt: not an error to show.
+class AuthCancelled extends AuthException {
+  AuthCancelled() : super('Sign-in cancelled.');
 }
 
 class AuthException implements Exception {
@@ -55,14 +81,18 @@ class LocalAuthService extends AuthService {
     if (raw == null) return null;
     final s = jsonDecode(raw) as Map<String, dynamic>;
     return Account(
-        uid: s['uid'] as String,
-        email: s['email'] as String,
-        displayName: s['name'] as String);
+      uid: s['uid'] as String,
+      email: s['email'] as String,
+      displayName: s['name'] as String,
+    );
   }
 
   @override
   Future<Account> register(
-      String email, String password, String displayName) async {
+    String email,
+    String password,
+    String displayName,
+  ) async {
     final p = await SharedPreferences.getInstance();
     final users = await _users(p);
     final key = email.trim().toLowerCase();
@@ -76,7 +106,8 @@ class LocalAuthService extends AuthService {
       throw AuthException('An account with this email already exists.');
     }
     final salt = DateTime.now().microsecondsSinceEpoch.toString();
-    final uid = 'local-${sha256.convert(utf8.encode(key)).toString().substring(0, 12)}';
+    final uid =
+        'local-${sha256.convert(utf8.encode(key)).toString().substring(0, 12)}';
     users[key] = {
       'salt': salt,
       'hash': _hash(password, salt),
@@ -85,13 +116,18 @@ class LocalAuthService extends AuthService {
     };
     await p.setString(_usersKey, jsonEncode(users));
     final account = Account(
-        uid: uid,
-        email: key,
-        displayName: (users[key] as Map<String, dynamic>)['name'] as String);
+      uid: uid,
+      email: key,
+      displayName: (users[key] as Map<String, dynamic>)['name'] as String,
+    );
     await p.setString(
-        _sessionKey,
-        jsonEncode(
-            {'uid': account.uid, 'email': key, 'name': account.displayName}));
+      _sessionKey,
+      jsonEncode({
+        'uid': account.uid,
+        'email': key,
+        'name': account.displayName,
+      }),
+    );
     return account;
   }
 
@@ -108,13 +144,18 @@ class LocalAuthService extends AuthService {
       throw AuthException('Incorrect password.');
     }
     final account = Account(
-        uid: u['uid'] as String,
-        email: key,
-        displayName: u['name'] as String);
+      uid: u['uid'] as String,
+      email: key,
+      displayName: u['name'] as String,
+    );
     await p.setString(
-        _sessionKey,
-        jsonEncode(
-            {'uid': account.uid, 'email': key, 'name': account.displayName}));
+      _sessionKey,
+      jsonEncode({
+        'uid': account.uid,
+        'email': key,
+        'name': account.displayName,
+      }),
+    );
     return account;
   }
 
@@ -131,9 +172,10 @@ class FirebaseAuthService extends AuthService {
   fb.FirebaseAuth get _auth => fb.FirebaseAuth.instance;
 
   Account _map(fb.User u) => Account(
-      uid: u.uid,
-      email: u.email ?? '',
-      displayName: u.displayName ?? (u.email ?? 'user').split('@').first);
+    uid: u.uid,
+    email: u.email ?? '',
+    displayName: u.displayName ?? (u.email ?? 'user').split('@').first,
+  );
 
   @override
   Future<Account?> restore() async {
@@ -141,20 +183,26 @@ class FirebaseAuthService extends AuthService {
     // (asynchronous on web), so reading it right after initializeApp
     // signs returning users out. The first authStateChanges event is the
     // restored state.
-    final u = _auth.currentUser ??
-        await _auth
-            .authStateChanges()
-            .first
-            .timeout(const Duration(seconds: 5), onTimeout: () => null);
+    final u =
+        _auth.currentUser ??
+        await _auth.authStateChanges().first.timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => null,
+        );
     return u == null ? null : _map(u);
   }
 
   @override
   Future<Account> register(
-      String email, String password, String displayName) async {
+    String email,
+    String password,
+    String displayName,
+  ) async {
     try {
       final cred = await _auth.createUserWithEmailAndPassword(
-          email: email.trim(), password: password);
+        email: email.trim(),
+        password: password,
+      );
       final name = displayName.trim();
       if (name.isNotEmpty) await cred.user!.updateDisplayName(name);
       // The User object from the credential predates updateDisplayName.
@@ -171,7 +219,9 @@ class FirebaseAuthService extends AuthService {
   Future<Account> login(String email, String password) async {
     try {
       final cred = await _auth.signInWithEmailAndPassword(
-          email: email.trim(), password: password);
+        email: email.trim(),
+        password: password,
+      );
       return _map(cred.user!);
     } on fb.FirebaseAuthException catch (e) {
       throw AuthException(friendlyFirebaseError(e.code, 'Login'));
@@ -179,7 +229,136 @@ class FirebaseAuthService extends AuthService {
   }
 
   @override
-  Future<void> logout() => _auth.signOut();
+  Future<void> logout() async {
+    // google_sign_in is only initialized off the web (the web flow is
+    // Firebase's popup), and signOut on an uninitialized instance throws.
+    if (!kIsWeb && _googleReady != null) {
+      try {
+        await GoogleSignIn.instance.signOut();
+      } catch (_) {}
+    }
+    await _auth.signOut();
+  }
+
+  // Google ---------------------------------------------------------------
+
+  /// OAuth "Web client" id of the Firebase project. Android needs it as the
+  /// server client id to receive an ID token for Firebase; it is public (it
+  /// ships in google-services.json as default_web_client_id).
+  static const String googleServerClientId = String.fromEnvironment(
+    'GOOGLE_SERVER_CLIENT_ID',
+    defaultValue: kGoogleServerClientId,
+  );
+
+  /// iOS OAuth client id (also public; from GoogleService-Info.plist).
+  static const String googleIosClientId = String.fromEnvironment(
+    'GOOGLE_IOS_CLIENT_ID',
+    defaultValue: kGoogleIosClientId,
+  );
+
+  Future<void>? _googleReady;
+
+  Future<void> _initGoogle() =>
+      _googleReady ??= GoogleSignIn.instance
+          .initialize(
+            clientId:
+                defaultTargetPlatform == TargetPlatform.iOS &&
+                        googleIosClientId.isNotEmpty
+                    ? googleIosClientId
+                    : null,
+            serverClientId:
+                googleServerClientId.isEmpty ? null : googleServerClientId,
+          )
+          .catchError((Object e) {
+            _googleReady = null; // allow a retry after a config fix
+            throw e;
+          });
+
+  @override
+  bool get supportsGoogle => true;
+
+  @override
+  Future<Account> signInWithGoogle() async {
+    try {
+      final fb.UserCredential cred;
+      if (kIsWeb) {
+        // Firebase's popup flow: no client id or meta tag needed, and
+        // google_sign_in's web init would hang without one.
+        cred = await _auth.signInWithPopup(
+          fb.GoogleAuthProvider()
+            ..setCustomParameters({'prompt': 'select_account'}),
+        );
+      } else {
+        await _initGoogle();
+        final account = await GoogleSignIn.instance.authenticate();
+        final idToken = account.authentication.idToken;
+        if (idToken == null) {
+          throw AuthException('Google did not return an ID token.');
+        }
+        cred = await _auth.signInWithCredential(
+          fb.GoogleAuthProvider.credential(idToken: idToken),
+        );
+      }
+      return _map(cred.user!);
+    } on GoogleSignInException catch (e) {
+      if (e.code == GoogleSignInExceptionCode.canceled ||
+          e.code == GoogleSignInExceptionCode.interrupted) {
+        throw AuthCancelled();
+      }
+      throw AuthException('Google sign-in failed (${e.code.name}).');
+    } on fb.FirebaseAuthException catch (e) {
+      if (e.code == 'popup-closed-by-user' ||
+          e.code == 'cancelled-popup-request') {
+        throw AuthCancelled();
+      }
+      throw AuthException(friendlyFirebaseError(e.code, 'Google sign-in'));
+    }
+  }
+
+  // Apple ----------------------------------------------------------------
+
+  @override
+  bool get supportsApple => kAppleSignInEnabled;
+
+  @override
+  Future<Account> signInWithApple() async {
+    final provider =
+        fb.AppleAuthProvider()
+          ..addScope('email')
+          ..addScope('name');
+    try {
+      // Native sheet on iOS/macOS; Apple's web flow (popup / Custom Tab)
+      // elsewhere, which needs the Services ID configured in Firebase.
+      final cred =
+          kIsWeb
+              ? await _auth.signInWithPopup(provider)
+              : await _auth.signInWithProvider(provider);
+      final user = cred.user!;
+      // Apple sends the name only on the very first sign-in; keep it.
+      final given = cred.additionalUserInfo?.profile?['name'];
+      var name = user.displayName;
+      if ((name == null || name.isEmpty) && given is Map) {
+        name =
+            [
+              given['firstName'],
+              given['lastName'],
+            ].whereType<String>().join(' ').trim();
+        if (name.isNotEmpty) await user.updateDisplayName(name);
+      }
+      final a = _map(user);
+      return name == null || name.isEmpty
+          ? a
+          : Account(uid: a.uid, email: a.email, displayName: name);
+    } on fb.FirebaseAuthException catch (e) {
+      if (e.code == 'canceled' ||
+          e.code == 'web-context-canceled' ||
+          e.code == 'popup-closed-by-user' ||
+          e.code == 'cancelled-popup-request') {
+        throw AuthCancelled();
+      }
+      throw AuthException(friendlyFirebaseError(e.code, 'Apple sign-in'));
+    }
+  }
 
   @override
   bool get supportsPasswordReset => true;
@@ -200,22 +379,23 @@ class FirebaseAuthService extends AuthService {
 /// credential is incorrect, malformed or has expired."); map the common
 /// codes to plain sentences.
 String friendlyFirebaseError(String code, String action) => switch (code) {
-      'invalid-email' => 'Enter a valid email address.',
-      'weak-password' => 'Password must be at least 6 characters.',
-      'email-already-in-use' => 'An account with this email already exists.',
-      'invalid-credential' ||
-      'wrong-password' ||
-      'user-not-found' =>
-        'Incorrect email or password.',
-      'user-disabled' => 'This account has been disabled.',
-      'too-many-requests' =>
-        'Too many attempts. Wait a moment and try again.',
-      'network-request-failed' => 'No connection. Check your network.',
-      'operation-not-allowed' =>
-        'Email sign-in is not enabled for this app yet.',
-      _ => '$action failed ($code).',
-    };
-
+  'invalid-email' => 'Enter a valid email address.',
+  'weak-password' => 'Password must be at least 6 characters.',
+  'email-already-in-use' => 'An account with this email already exists.',
+  'invalid-credential' ||
+  'wrong-password' ||
+  'user-not-found' => 'Incorrect email or password.',
+  'user-disabled' => 'This account has been disabled.',
+  'too-many-requests' => 'Too many attempts. Wait a moment and try again.',
+  'network-request-failed' => 'No connection. Check your network.',
+  'operation-not-allowed' =>
+    'This sign-in method is not enabled for this app yet.',
+  'account-exists-with-different-credential' =>
+    'This email already has an account. Log in with your password.',
+  'popup-blocked' => 'Allow pop-ups for this site, then try again.',
+  'unauthorized-domain' => 'This domain is not authorized for sign-in yet.',
+  _ => '$action failed ($code).',
+};
 
 /// App-facing auth state. Router redirects hang off this notifier.
 class AuthController extends ChangeNotifier {
@@ -235,11 +415,12 @@ class AuthController extends ChangeNotifier {
 
   /// Emails whose first registration claims the seeded demo profile; set at
   /// build time with --dart-define=CLAIMED_EMAILS=a@x.com,b@y.com (see .env.example).
-  static final claimedEmails = const String.fromEnvironment('CLAIMED_EMAILS')
-      .split(',')
-      .map((e) => e.trim().toLowerCase())
-      .where((e) => e.isNotEmpty)
-      .toSet();
+  static final claimedEmails =
+      const String.fromEnvironment('CLAIMED_EMAILS')
+          .split(',')
+          .map((e) => e.trim().toLowerCase())
+          .where((e) => e.isNotEmpty)
+          .toSet();
 
   bool get isSeededProfile =>
       _account != null && claimedEmails.contains(_account!.email.toLowerCase());
@@ -261,6 +442,18 @@ class AuthController extends ChangeNotifier {
   }
 
   bool get supportsPasswordReset => service.supportsPasswordReset;
+  bool get supportsGoogle => service.supportsGoogle;
+  bool get supportsApple => service.supportsApple;
+
+  Future<void> signInWithApple() async {
+    _account = await service.signInWithApple();
+    notifyListeners();
+  }
+
+  Future<void> signInWithGoogle() async {
+    _account = await service.signInWithGoogle();
+    notifyListeners();
+  }
 
   Future<void> sendPasswordReset(String email) =>
       service.sendPasswordReset(email);

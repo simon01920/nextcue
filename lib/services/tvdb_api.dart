@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'api_cache.dart';
+import 'rate_limiter.dart';
 
 /// Thin TheTVDB v4 client. The API key is injected at build time via
 /// --dart-define=TVDB_API_KEY=... and is never committed as a literal
@@ -12,9 +13,21 @@ import 'api_cache.dart';
 /// requests never re-spend the free-tier quota. Cache hits skip both the
 /// network and the token refresh.
 class TvdbApi {
-  TvdbApi({http.Client? client, ApiCache? cache})
-      : _client = client ?? http.Client(),
-        _cache = cache;
+  TvdbApi({http.Client? client, ApiCache? cache, RateLimiter? limiter})
+    : _client = client ?? http.Client(),
+      _cache = cache,
+      limiter =
+          limiter ??
+          RateLimiter(
+            maxRequests: 60,
+            per: const Duration(minutes: 1),
+            maxConcurrent: 6,
+          );
+
+  /// TVDB publishes no hard per-key limit but throttles bursts with 429s,
+  /// and the key is shared by every install, so each device keeps to a
+  /// modest budget and backs off fully after a 429.
+  final RateLimiter limiter;
 
   static const String _base = 'https://api4.thetvdb.com/v4';
   static const String apiKey = String.fromEnvironment('TVDB_API_KEY');
@@ -60,16 +73,20 @@ class TvdbApi {
   /// the same moment (screens load several titles in parallel), instead of
   /// one POST /login each.
   Future<void> _refreshToken() {
-    return _loginInFlight ??= _login().then((t) {
-      _token = t;
-      _tokenTime = DateTime.now();
-    }).whenComplete(() {
-      _loginInFlight = null;
-    });
+    return _loginInFlight ??= _login()
+        .then((t) {
+          _token = t;
+          _tokenTime = DateTime.now();
+        })
+        .whenComplete(() {
+          _loginInFlight = null;
+        });
   }
 
-  Future<Map<String, dynamic>> _get(String path,
-      [Map<String, String>? query]) async {
+  Future<Map<String, dynamic>> _get(
+    String path, [
+    Map<String, String>? query,
+  ]) async {
     final uri = Uri.parse('$_base$path').replace(queryParameters: query);
     final cache = _cache;
     if (cache == null) {
@@ -86,29 +103,36 @@ class TvdbApi {
   /// Performs the actual request, refreshing the token when needed and
   /// honouring a single `Retry-After` backoff on HTTP 429. Returns the raw
   /// body so the cache can store it verbatim; only 200s ever get here.
-  Future<String> _fetchRaw(String path, Uri uri) async {
+  Future<String> _fetchRaw(String path, Uri uri) => limiter.run(() async {
     if (_token == null ||
         DateTime.now().difference(_tokenTime) > const Duration(hours: 20)) {
       await _refreshToken();
     }
-    var res = await _client.get(uri,
-        headers: {'Authorization': 'Bearer $_token'}).timeout(requestTimeout);
+    Future<http.Response> get() => _client
+        .get(uri, headers: {'Authorization': 'Bearer $_token'})
+        .timeout(requestTimeout);
+    var res = await get();
     if (res.statusCode == 401) {
       await _refreshToken();
-      res = await _client.get(uri,
-          headers: {'Authorization': 'Bearer $_token'}).timeout(requestTimeout);
+      res = await get();
     }
     if (res.statusCode == 429) {
       final wait = retryAfterDelay(res.headers['retry-after']);
+      // Pause every request, not just this one.
+      limiter.cooldown(wait);
       await Future<void>.delayed(wait);
-      res = await _client.get(uri,
-          headers: {'Authorization': 'Bearer $_token'}).timeout(requestTimeout);
+      res = await get();
+      if (res.statusCode == 429) {
+        limiter.cooldown(
+          retryAfter(res.headers, fallback: const Duration(seconds: 60)),
+        );
+      }
     }
     if (res.statusCode != 200) {
       throw TvdbException('GET $path failed: HTTP ${res.statusCode}');
     }
     return res.body;
-  }
+  });
 
   /// Parses a `Retry-After` header (seconds) and clamps it to a sane window
   /// so a hostile value can't stall the UI.
@@ -118,8 +142,11 @@ class TvdbApi {
   }
 
   /// /search — type: 'series' | 'movie' | null (both).
-  Future<List<Map<String, dynamic>>> search(String query,
-      {String? type, int limit = 25}) async {
+  Future<List<Map<String, dynamic>>> search(
+    String query, {
+    String? type,
+    int limit = 25,
+  }) async {
     final body = await _get('/search', {
       'query': query,
       if (type != null) 'type': type,
@@ -157,10 +184,13 @@ class TvdbApi {
   }
 
   /// /series/{id}/episodes/default/eng — episode list with English names.
-  Future<List<Map<String, dynamic>>> seriesEpisodes(int id,
-      {int page = 0}) async {
-    final body =
-        await _get('/series/$id/episodes/default/eng', {'page': '$page'});
+  Future<List<Map<String, dynamic>>> seriesEpisodes(
+    int id, {
+    int page = 0,
+  }) async {
+    final body = await _get('/series/$id/episodes/default/eng', {
+      'page': '$page',
+    });
     final data = (body['data'] as Map<String, dynamic>?) ?? const {};
     return (data['episodes'] as List? ?? const []).cast<Map<String, dynamic>>();
   }

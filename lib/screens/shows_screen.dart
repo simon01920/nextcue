@@ -158,6 +158,19 @@ class _WatchlistBody extends StatefulWidget {
 class _WatchlistBodyState extends State<_WatchlistBody> {
   Future<List<WatchlistEntry>>? _future;
   int _revision = -1;
+  final Key _centerKey = UniqueKey();
+
+  static List<Widget> _section(String label, List<WatchlistEntry> entries) {
+    if (entries.isEmpty) return const [];
+    return [
+      SliverToBoxAdapter(child: SectionChip(label)),
+      SliverList.builder(
+        itemCount: entries.length,
+        itemBuilder: (context, i) =>
+            EpisodeRow(key: ValueKey(entries[i].title.id), entry: entries[i]),
+      ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -206,33 +219,32 @@ class _WatchlistBodyState extends State<_WatchlistBody> {
             .where((e) => appState.watchedCountFor(e.title.id) == 0)
             .toList();
 
-        // Pull down past the top to reveal watch history (haptic tick at the
-        // halfway point, heavier one when it opens).
-        return OverscrollReveal(
-          onReveal: () => showWatchHistory(context),
-          child: ListView(
-          // Bottom inset keeps the last row clear of the floating glass nav.
+        // TV Time's layout: the watch list opens where it always did, and
+        // scrolling *up* from it walks back through what you watched (the
+        // history slivers sit before the centre sliver, so they grow
+        // upward and never push the list down).
+        final hasHistory = appState.watchedEpisodeTotal > 0;
+        return CustomScrollView(
+          center: _centerKey,
           physics: const AlwaysScrollableScrollPhysics(
               parent: BouncingScrollPhysics()),
-          padding:
-              EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
-          children: [
-            const _HistoryHint(),
-            if (caughtUp.isNotEmpty) _CaughtUpSection(entries: caughtUp),
-            if (continueWatching.isNotEmpty) ...[
-              const SectionChip('CONTINUE WATCHING'),
-              for (final e in continueWatching) EpisodeRow(entry: e),
-            ],
-            if (stale.isNotEmpty) ...[
-              const SectionChip("HAVEN'T WATCHED FOR A WHILE"),
-              for (final e in stale) EpisodeRow(entry: e),
-            ],
-            if (notStarted.isNotEmpty) ...[
-              const SectionChip('NOT STARTED'),
-              for (final e in notStarted) EpisodeRow(entry: e),
-            ],
+          slivers: [
+            if (hasHistory) const InlineWatchHistory(),
+            SliverToBoxAdapter(
+              key: _centerKey,
+              child: _HistoryHint(hasHistory: hasHistory),
+            ),
+            if (caughtUp.isNotEmpty)
+              SliverToBoxAdapter(child: _CaughtUpSection(entries: caughtUp)),
+            ..._section('CONTINUE WATCHING', continueWatching),
+            ..._section("HAVEN'T WATCHED FOR A WHILE", stale),
+            ..._section('NOT STARTED', notStarted),
+            // Bottom inset keeps the last row clear of the floating glass nav.
+            SliverPadding(
+              padding: EdgeInsets.only(
+                  bottom: MediaQuery.paddingOf(context).bottom),
+            ),
           ],
-          ),
         );
       },
     );
@@ -370,19 +382,22 @@ class _UpcomingBodyState extends State<_UpcomingBody> {
 /// Discoverability affordance for the pull-down history gesture. Sits at the
 /// very top of the watch list, so it is only visible while overscrolling.
 class _HistoryHint extends StatelessWidget {
-  const _HistoryHint();
+  final bool hasHistory;
+  const _HistoryHint({required this.hasHistory});
   @override
   Widget build(BuildContext context) {
+    if (!hasHistory) return const SizedBox(height: AppSpacing.xs);
     return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+      padding: const EdgeInsets.only(
+          top: AppSpacing.xs, bottom: AppSpacing.xs),
       child: Center(
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.keyboard_double_arrow_down,
+            Icon(Icons.keyboard_double_arrow_up,
                 size: 14, color: AppColors.textDisabled),
             const SizedBox(width: AppSpacing.xs),
-            Text('Pull down for watch history',
+            Text('Scroll up for recently watched',
                 style: AppTextStyles.microCaps),
           ],
         ),
