@@ -7,6 +7,8 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_provider_config.dart';
+import 'demo_seed.dart' show demoEmail;
+import 'password_policy.dart';
 
 /// A signed-in Bingely account.
 @immutable
@@ -14,10 +16,19 @@ class Account {
   final String uid;
   final String email;
   final String displayName;
+
+  /// False until the owner clicks the link in the verification email
+  /// (Firebase email/password accounts only).
+  final bool emailVerified;
+
+  /// Signs in with a password (so changing it / re-entering it applies).
+  final bool hasPassword;
   const Account({
     required this.uid,
     required this.email,
     required this.displayName,
+    this.emailVerified = true,
+    this.hasPassword = true,
   });
 }
 
@@ -47,6 +58,22 @@ abstract class AuthService {
 
   Future<Account> signInWithApple() async =>
       throw AuthException('Apple sign-in needs an online account.');
+
+  /// (Re)sends the verification email to the signed-in account.
+  Future<void> sendEmailVerification() async {}
+
+  /// The signed-in account re-read from the backend (to pick up a
+  /// verification made in another tab or app).
+  Future<Account?> reload() => restore();
+
+  /// Proves it's still the owner before a sensitive change. [password] is
+  /// required for password accounts.
+  Future<void> reauthenticate(String? password);
+
+  Future<void> changePassword(String current, String next);
+
+  /// Deletes the signed-in account's login. Call [reauthenticate] first.
+  Future<void> deleteAccount();
 }
 
 /// The user dismissed a sign-in prompt: not an error to show.
@@ -164,6 +191,38 @@ class LocalAuthService extends AuthService {
     final p = await SharedPreferences.getInstance();
     await p.remove(_sessionKey);
   }
+
+  Future<String> _sessionEmail() async =>
+      (await restore())?.email ?? (throw AuthException('Not signed in.'));
+
+  @override
+  Future<void> reauthenticate(String? password) async {
+    final p = await SharedPreferences.getInstance();
+    final u = (await _users(p))[await _sessionEmail()] as Map<String, dynamic>?;
+    if (u == null || _hash(password ?? '', u['salt'] as String) != u['hash']) {
+      throw AuthException('Incorrect password.');
+    }
+  }
+
+  @override
+  Future<void> changePassword(String current, String next) async {
+    await reauthenticate(current);
+    final p = await SharedPreferences.getInstance();
+    final users = await _users(p);
+    final u = users[await _sessionEmail()] as Map<String, dynamic>;
+    final salt = DateTime.now().microsecondsSinceEpoch.toString();
+    u['salt'] = salt;
+    u['hash'] = _hash(next, salt);
+    await p.setString(_usersKey, jsonEncode(users));
+  }
+
+  @override
+  Future<void> deleteAccount() async {
+    final p = await SharedPreferences.getInstance();
+    final users = await _users(p)..remove(await _sessionEmail());
+    await p.setString(_usersKey, jsonEncode(users));
+    await p.remove(_sessionKey);
+  }
 }
 
 /// Firebase-backed accounts. Selected automatically when
@@ -171,11 +230,17 @@ class LocalAuthService extends AuthService {
 class FirebaseAuthService extends AuthService {
   fb.FirebaseAuth get _auth => fb.FirebaseAuth.instance;
 
-  Account _map(fb.User u) => Account(
-    uid: u.uid,
-    email: u.email ?? '',
-    displayName: u.displayName ?? (u.email ?? 'user').split('@').first,
-  );
+  Account _map(fb.User u) {
+    final hasPassword = u.providerData.any((p) => p.providerId == 'password');
+    return Account(
+      uid: u.uid,
+      email: u.email ?? '',
+      displayName: u.displayName ?? (u.email ?? 'user').split('@').first,
+      // Google/Apple confirm the address themselves.
+      emailVerified: u.emailVerified || !hasPassword,
+      hasPassword: hasPassword,
+    );
+  }
 
   @override
   Future<Account?> restore() async {
@@ -205,11 +270,17 @@ class FirebaseAuthService extends AuthService {
       );
       final name = displayName.trim();
       if (name.isNotEmpty) await cred.user!.updateDisplayName(name);
+      await cred.user!.sendEmailVerification();
       // The User object from the credential predates updateDisplayName.
       final a = _map(cred.user!);
       return name.isEmpty
           ? a
-          : Account(uid: a.uid, email: a.email, displayName: name);
+          : Account(
+              uid: a.uid,
+              email: a.email,
+              displayName: name,
+              emailVerified: a.emailVerified,
+              hasPassword: a.hasPassword);
     } on fb.FirebaseAuthException catch (e) {
       throw AuthException(friendlyFirebaseError(e.code, 'Registration'));
     }
@@ -363,6 +434,54 @@ class FirebaseAuthService extends AuthService {
   @override
   bool get supportsPasswordReset => true;
 
+  fb.User get _user =>
+      _auth.currentUser ?? (throw AuthException('Not signed in.'));
+
+  Future<T> _guard<T>(String action, Future<T> Function() fn) async {
+    try {
+      return await fn();
+    } on fb.FirebaseAuthException catch (e) {
+      throw AuthException(friendlyFirebaseError(e.code, action));
+    }
+  }
+
+  @override
+  Future<void> sendEmailVerification() =>
+      _guard('Sending the email', () => _user.sendEmailVerification());
+
+  @override
+  Future<Account?> reload() async {
+    await _auth.currentUser?.reload();
+    final u = _auth.currentUser;
+    return u == null ? null : _map(u);
+  }
+
+  @override
+  Future<void> reauthenticate(String? password) => _guard('Confirming your identity', () async {
+        final u = _user;
+        if (_map(u).hasPassword) {
+          await u.reauthenticateWithCredential(fb.EmailAuthProvider.credential(
+              email: u.email ?? '', password: password ?? ''));
+        } else if (kIsWeb) {
+          await u.reauthenticateWithPopup(u.providerData.first.providerId == 'apple.com'
+              ? fb.AppleAuthProvider()
+              : fb.GoogleAuthProvider());
+        } else {
+          await u.reauthenticateWithProvider(u.providerData.first.providerId == 'apple.com'
+              ? fb.AppleAuthProvider()
+              : fb.GoogleAuthProvider());
+        }
+      });
+
+  @override
+  Future<void> changePassword(String current, String next) async {
+    await reauthenticate(current);
+    await _guard('Changing the password', () => _user.updatePassword(next));
+  }
+
+  @override
+  Future<void> deleteAccount() => _guard('Deleting the account', () => _user.delete());
+
   @override
   Future<void> sendPasswordReset(String email) async {
     try {
@@ -380,7 +499,11 @@ class FirebaseAuthService extends AuthService {
 /// codes to plain sentences.
 String friendlyFirebaseError(String code, String action) => switch (code) {
   'invalid-email' => 'Enter a valid email address.',
-  'weak-password' => 'Password must be at least 6 characters.',
+  'weak-password' => 'That password is too weak.',
+  'requires-recent-login' =>
+    'For security, log out and log in again, then retry.',
+  'too-many-requests' when action == 'Sending the email' =>
+    'An email was sent recently. Check your inbox, or wait a minute.',
   'email-already-in-use' => 'An account with this email already exists.',
   'invalid-credential' ||
   'wrong-password' ||
@@ -403,7 +526,11 @@ class AuthController extends ChangeNotifier {
   Account? _account;
   bool _restored = false;
 
-  AuthController(this.service, {this.beforeLogout});
+  AuthController(this.service, {this.beforeLogout, this.eraseData});
+
+  /// Deletes the account's synced and local data; runs during
+  /// [deleteAccount] while the account is still authenticated.
+  final Future<void> Function(String uid)? eraseData;
 
   /// Runs before signing out while the account is still authenticated
   /// (Firestore rules reject writes after sign-out).
@@ -432,7 +559,49 @@ class AuthController extends ChangeNotifier {
   }
 
   Future<void> register(String email, String password, String name) async {
+    // The shared demo account keeps its published password.
+    if (email.trim().toLowerCase() != demoEmail) {
+      final problems = passwordProblems(password, email: email, name: name);
+      if (problems.isNotEmpty) {
+        throw AuthException('Password needs: ${problems.join(', ').toLowerCase()}.');
+      }
+    }
     _account = await service.register(email, password, name);
+    notifyListeners();
+  }
+
+  /// Signed in with an email address that hasn't been confirmed yet.
+  bool get needsVerification =>
+      _account != null && !_account!.emailVerified && _account!.email != demoEmail;
+
+  Future<void> resendVerification() => service.sendEmailVerification();
+
+  /// Re-reads the account; true once the email has been verified.
+  Future<bool> refreshVerification() async {
+    final a = await service.reload();
+    if (a != null) {
+      _account = a;
+      notifyListeners();
+    }
+    return !needsVerification;
+  }
+
+  Future<void> changePassword(String current, String next) async {
+    final a = _account!;
+    final problems = passwordProblems(next, email: a.email, name: a.displayName);
+    if (problems.isNotEmpty) {
+      throw AuthException('Password needs: ${problems.join(', ').toLowerCase()}.');
+    }
+    await service.changePassword(current, next);
+  }
+
+  /// Permanently deletes the account and everything it stored.
+  Future<void> deleteAccount({String? password}) async {
+    final uid = _account!.uid;
+    await service.reauthenticate(password);
+    await eraseData?.call(uid);
+    await service.deleteAccount();
+    _account = null;
     notifyListeners();
   }
 

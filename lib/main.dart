@@ -1,5 +1,5 @@
 import 'dart:async' show unawaited;
-import 'dart:ui' show PlatformDispatcher;
+import 'dart:ui' show PlatformDispatcher, PointerDeviceKind;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
@@ -61,7 +61,8 @@ Future<void> main() async {
   final appState = AppState(cloud: cloud);
   // Push queued edits before the session ends so nothing is stranded on
   // this device.
-  final auth = AuthController(authService, beforeLogout: appState.syncNow);
+  final auth = AuthController(authService,
+      beforeLogout: appState.syncNow, eraseData: appState.eraseAccount);
   final prefs = await SharedPreferences.getInstance();
 
   // Shared response cache for both catalog APIs: repeat requests are served
@@ -185,6 +186,10 @@ class _NextCueAppState extends State<NextCueApp> {
           return MaterialApp.router(
             title: 'NextCue',
             debugShowCheckedModeBanner: false,
+            // Mouse and trackpad drags scroll like touch, so the watch
+            // list's pull-down history works on desktop too.
+            scrollBehavior: const MaterialScrollBehavior().copyWith(
+                dragDevices: PointerDeviceKind.values.toSet()),
             theme: AppTheme.light,
             darkTheme: AppTheme.dark,
             themeMode: mode,

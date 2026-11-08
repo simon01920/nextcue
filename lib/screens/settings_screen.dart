@@ -6,6 +6,7 @@ import '../services/auth_service.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
 import '../widgets/common.dart';
+import '../widgets/password_rules.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -54,7 +55,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _labelValue('Username', account?.displayName ?? '—'),
         _labelValue('Email', account?.email ?? '—', link: true),
         _labelValue('User ID', account?.uid ?? '—'),
-        _navRow('Change password'),
+        if (account?.hasPassword ?? false)
+          _navRow('Change password', onTap: _changePassword),
         const Divider(height: AppSpacing.xxl),
         _sectionHeaderRow('Social Networks'),
         _navRow('Edit linked accounts'),
@@ -75,12 +77,144 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: AppSpacing.md),
         Center(
-          child: Text('DELETE ACCOUNT',
-              style: AppTextStyles.captionCaps
-                  .copyWith(color: AppColors.link)),
+          child: TextButton(
+            onPressed: _deleteAccount,
+            child: Text('DELETE ACCOUNT',
+                style: AppTextStyles.captionCaps
+                    .copyWith(color: AppColors.error)),
+          ),
         ),
       ],
     );
+  }
+
+  Future<void> _changePassword() async {
+    final auth = context.read<AuthController>();
+    final current = TextEditingController();
+    final next = TextEditingController();
+    String? error;
+    var busy = false;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Change password'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                    controller: current,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'Current password')),
+                TextField(
+                    controller: next,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'New password')),
+                const SizedBox(height: AppSpacing.sm),
+                PasswordRulesList(
+                    password: next,
+                    email: () => auth.account?.email ?? '',
+                    name: () => auth.account?.displayName ?? ''),
+                if (error != null) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(error!, style: AppTextStyles.subtitle.copyWith(color: AppColors.error)),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            TextButton(
+              onPressed: busy
+                  ? null
+                  : () async {
+                      setLocal(() {
+                        busy = true;
+                        error = null;
+                      });
+                      try {
+                        await auth.changePassword(current.text, next.text);
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Password changed')));
+                        }
+                      } on AuthException catch (e) {
+                        setLocal(() => error = e.message);
+                      } finally {
+                        if (ctx.mounted) setLocal(() => busy = false);
+                      }
+                    },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    current.dispose();
+    next.dispose();
+  }
+
+  Future<void> _deleteAccount() async {
+    final auth = context.read<AuthController>();
+    final needsPassword = auth.account?.hasPassword ?? false;
+    final password = TextEditingController();
+    String? error;
+    var busy = false;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Delete account?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('This permanently deletes your account, watch history, '
+                  'lists and ratings, on every device. It cannot be undone.'),
+              if (needsPassword)
+                TextField(
+                    controller: password,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'Password to confirm')),
+              if (error != null) ...[
+                const SizedBox(height: AppSpacing.sm),
+                Text(error!, style: AppTextStyles.subtitle.copyWith(color: AppColors.error)),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            TextButton(
+              onPressed: busy
+                  ? null
+                  : () async {
+                      setLocal(() {
+                        busy = true;
+                        error = null;
+                      });
+                      try {
+                        await auth.deleteAccount(password: needsPassword ? password.text : null);
+                        if (ctx.mounted) Navigator.pop(ctx);
+                      } on AuthException catch (e) {
+                        if (ctx.mounted) setLocal(() => error = e.message);
+                      } catch (_) {
+                        if (ctx.mounted) {
+                          setLocal(() => error = 'Could not delete the account. Try again.');
+                        }
+                      } finally {
+                        if (ctx.mounted) setLocal(() => busy = false);
+                      }
+                    },
+              child: const Text('Delete forever', style: TextStyle(color: AppColors.error)),
+            ),
+          ],
+        ),
+      ),
+    );
+    password.dispose();
   }
 
   Widget _appTab() {

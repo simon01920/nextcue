@@ -15,6 +15,9 @@ abstract class CloudSync {
 
   /// Merges [fields] into the account's document.
   Future<void> save(String uid, Map<String, Object?> fields);
+
+  /// Removes the account's document (account deletion).
+  Future<void> delete(String uid);
 }
 
 /// Firestore-backed sync: one document per account at `users/{uid}`.
@@ -61,6 +64,9 @@ class FirestoreCloudSync implements CloudSync {
       }
     }
   }
+
+  @override
+  Future<void> delete(String uid) => _doc(uid).delete();
 
   @override
   Future<void> save(String uid, Map<String, Object?> fields) {

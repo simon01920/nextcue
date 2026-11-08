@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../data/repository.dart';
 import '../models/models.dart';
+import '../services/api_cache.dart';
+import '../services/justwatch_api.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
 import '../widgets/brand.dart';
@@ -299,9 +302,9 @@ class _AboutTab extends StatelessWidget {
   Widget build(BuildContext context) {
     return SliverList(
       delegate: SliverChildListDelegate([
-        _WhereToWatch(),
+        _WhereToWatch(title: title),
         const Divider(),
-        _Survey(isShow: title.isShow),
+        _Survey(title: title),
         const Divider(),
         _ShowInfo(title: title),
         if (title.cast.isNotEmpty) ...[
@@ -319,7 +322,16 @@ class _AboutTab extends StatelessWidget {
   }
 }
 
-class _WhereToWatch extends StatelessWidget {
+class _WhereToWatch extends StatefulWidget {
+  final MediaTitle title;
+  const _WhereToWatch({required this.title});
+  @override
+  State<_WhereToWatch> createState() => _WhereToWatchState();
+}
+
+class _WhereToWatchState extends State<_WhereToWatch> {
+  late final Future<List<WatchOffer>> _offers = watchOffersFor(context, widget.title);
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -327,57 +339,135 @@ class _WhereToWatch extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                  child: Text('Where to watch',
-                      style: AppTextStyles.sectionHeader.copyWith(fontSize: 18))),
-              Icon(Icons.settings, size: 20, color: AppColors.textMuted),
-            ],
-          ),
+          Text('Where to watch',
+              style: AppTextStyles.sectionHeader.copyWith(fontSize: 18)),
           const SizedBox(height: AppSpacing.sm),
-          Text('Not available', style: AppTextStyles.subtitle),
+          FutureBuilder<List<WatchOffer>>(
+            future: _offers,
+            builder: (context, snap) {
+              if (!snap.hasData) {
+                return Text('Looking it up…', style: AppTextStyles.subtitle);
+              }
+              final offers = snap.data!;
+              if (offers.isEmpty) {
+                return Text('Not available to stream in ${JustWatchApi.country}',
+                    style: AppTextStyles.subtitle);
+              }
+              return SizedBox(
+                height: AppLayout.providerSquare + 34,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: offers.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.md),
+                  itemBuilder: (context, i) => _OfferTile(offer: offers[i]),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text('Data from JustWatch', style: AppTextStyles.microCaps),
         ],
       ),
     );
   }
 }
 
-class _Survey extends StatelessWidget {
-  final bool isShow;
-  const _Survey({required this.isShow});
+/// Offers for [title] in the user's country, via JustWatch.
+Future<List<WatchOffer>> watchOffersFor(BuildContext context, MediaTitle title) {
+  final year = int.tryParse(RegExp(r'\d{4}').firstMatch(title.yearLine)?[0] ?? '');
+  return JustWatchApi(cache: context.read<ApiCache>())
+      .offers(name: title.name, isShow: title.isShow, year: year);
+}
+
+class _OfferTile extends StatelessWidget {
+  final WatchOffer offer;
+  const _OfferTile({required this.offer});
+  static const _types = {
+    'FLATRATE': 'STREAM', 'FREE': 'FREE', 'ADS': 'FREE', 'RENT': 'RENT', 'BUY': 'BUY',
+  };
   @override
   Widget build(BuildContext context) {
-    final options = [
-      'THE CAST',
-      'THE PREMISE',
-      'THE CREATORS',
-      isShow ? 'THE NETWORK/PLATFORM' : 'THE STUDIO',
-      'THE FRANCHISE OR UNIVERSE',
-      'OTHER',
+    return Semantics(
+      button: true,
+      label: '${offer.service}, ${_types[offer.type] ?? offer.type}',
+      child: GestureDetector(
+        onTap: offer.url.isEmpty
+            ? null
+            : () => launchUrl(Uri.parse(offer.url), mode: LaunchMode.externalApplication),
+        child: Column(
+          children: [
+            Poster(
+                width: AppLayout.providerSquare,
+                height: AppLayout.providerSquare,
+                radius: AppRadius.md,
+                imageAsset: offer.iconUrl,
+                label: offer.service),
+            const SizedBox(height: AppSpacing.xs),
+            Text(_types[offer.type] ?? offer.type, style: AppTextStyles.microCaps),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Two quick questions per title; answers are saved and synced.
+class _Survey extends StatelessWidget {
+  final MediaTitle title;
+  const _Survey({required this.title});
+  @override
+  Widget build(BuildContext context) {
+    final isShow = title.isShow;
+    final appState = context.watch<AppState>();
+    final interests = appState.answersOf(title.id, 'interests');
+    final recommend = appState.answerOf(title.id, 'recommend');
+    const interestOptions = [
+      'THE CAST', 'THE PREMISE', 'THE CREATORS', 'THE NETWORK/PLATFORM',
+      'THE FRANCHISE OR UNIVERSE', 'THE REVIEWS', 'A FRIEND RECOMMENDED IT',
     ];
-    return Padding(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      child: Column(
-        children: [
-          Text(
-              'WHAT INTERESTS YOU MOST ABOUT THIS ${isShow ? 'SHOW' : 'MOVIE'}?',
-              style: AppTextStyles.captionCaps),
-          const SizedBox(height: AppSpacing.md),
-          for (final o in options)
-            Container(
+    Widget chip(String label, bool on, VoidCallback onTap) => Semantics(
+          button: true,
+          selected: on,
+          child: GestureDetector(
+            onTap: () {
+              HapticFeedback.selectionClick();
+              onTap();
+            },
+            child: Container(
               width: double.infinity,
               margin: const EdgeInsets.only(bottom: AppSpacing.sm),
               padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm + 2),
               decoration: BoxDecoration(
-                color: AppColors.surface,
+                color: on ? AppColors.surfaceElevated : AppColors.surface,
                 borderRadius: BorderRadius.circular(AppRadius.md),
+                border: on ? Border.all(color: AppColors.accent) : null,
               ),
-              child: Text(o,
+              child: Text(label,
                   textAlign: TextAlign.center,
-                  style: AppTextStyles.captionCaps
-                      .copyWith(color: AppColors.textPrimary)),
+                  style: AppTextStyles.captionCaps.copyWith(
+                      color: on ? AppColors.accentAlt : AppColors.textPrimary)),
             ),
+          ),
+        );
+    return Padding(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: Column(
+        children: [
+          Text('WHAT INTERESTS YOU MOST ABOUT THIS ${isShow ? 'SHOW' : 'MOVIE'}?',
+              textAlign: TextAlign.center, style: AppTextStyles.captionCaps),
+          Text('Pick any', style: AppTextStyles.microCaps),
+          const SizedBox(height: AppSpacing.md),
+          for (final o in interestOptions)
+            chip(isShow || o != 'THE NETWORK/PLATFORM' ? o : 'THE STUDIO',
+                interests.contains(o),
+                () => context.read<AppState>().toggleAnswer(title.id, 'interests', o)),
+          const SizedBox(height: AppSpacing.lg),
+          Text('WOULD YOU RECOMMEND IT?', style: AppTextStyles.captionCaps),
+          const SizedBox(height: AppSpacing.md),
+          for (final o in const ['YES', 'MAYBE', 'NO'])
+            chip(o, recommend == o,
+                () => context.read<AppState>().setAnswer(
+                    title.id, 'recommend', recommend == o ? null : o)),
         ],
       ),
     );
@@ -756,89 +846,120 @@ class _EpCheck extends StatelessWidget {
   }
 }
 
-class _MoreTab extends StatelessWidget {
+class _MoreTab extends StatefulWidget {
   final MediaTitle title;
   const _MoreTab({required this.title});
   @override
+  State<_MoreTab> createState() => _MoreTabState();
+}
+
+class _MoreTabState extends State<_MoreTab> {
+  late final Future<List<WatchOffer>> _offers = watchOffersFor(context, widget.title);
+
+  @override
   Widget build(BuildContext context) {
+    final id = widget.title.id;
+    final appState = context.watch<AppState>();
+    final where = appState.deviceOf(id);
+    final rating = appState.ratingOf(id) ?? 0;
     return Padding(
       padding: const EdgeInsets.all(AppSpacing.md),
       child: Column(
         children: [
           Text('WHERE DID YOU WATCH?', style: AppTextStyles.captionCaps),
           const SizedBox(height: AppSpacing.md),
+          FutureBuilder<List<WatchOffer>>(
+            future: _offers,
+            builder: (context, snap) {
+              final options = [
+                for (final o in snap.data ?? const <WatchOffer>[])
+                  (o.service, o.iconUrl, null as IconData?, false),
+                ('THEATER', null, Icons.theaters, false),
+                ('OTHER', null, Icons.more_horiz, false),
+                ('UNOFFICIAL', null, Icons.block, true),
+              ];
+              return Wrap(
+                alignment: WrapAlignment.center,
+                spacing: AppSpacing.md,
+                runSpacing: AppSpacing.md,
+                children: [
+                  for (final (label, icon, glyph, red) in options)
+                    _whereTile(label, icon, glyph, red, selected: where == label,
+                        onTap: () => context.read<AppState>().setDevice(id, label)),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: AppSpacing.xl),
+          Text('RATE THIS ${widget.title.isShow ? 'SHOW' : 'MOVIE'}',
+              style: AppTextStyles.captionCaps),
+          const SizedBox(height: AppSpacing.sm),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _provider(Icons.theaters, 'THEATER'),
-              _provider(Icons.more_horiz, 'OTHER'),
-              _provider(Icons.block, 'UNOFFICIAL', red: true),
+              for (var i = 0; i < 5; i++)
+                Semantics(
+                  button: true,
+                  label: '${i + 1} of 5 stars',
+                  selected: i < rating,
+                  child: GestureDetector(
+                    onTap: () => context.read<AppState>().rate(id, i + 1),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+                      child: Column(
+                        children: [
+                          Icon(Icons.star,
+                              size: AppLayout.starSize,
+                              color: i < rating ? AppColors.accent : AppColors.textDisabled),
+                          Text(const ['BAD', 'OK', 'GOOD', 'GREAT', 'WOW'][i],
+                              style: AppTextStyles.microCaps),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
-          const SizedBox(height: AppSpacing.xl),
-          Text('RATE THIS MOVIE', style: AppTextStyles.captionCaps),
-          const SizedBox(height: AppSpacing.sm),
-          const _StarRow(),
         ],
       ),
     );
   }
 
-  Widget _provider(IconData icon, String label, {bool red = false}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-      child: Column(
-        children: [
-          Container(
-            width: AppLayout.providerSquare,
-            height: AppLayout.providerSquare,
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(AppRadius.md),
-            ),
-            child: Icon(icon,
-                color: red ? AppColors.unofficialRed : AppColors.textPrimary),
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(label, style: AppTextStyles.microCaps),
-        ],
-      ),
-    );
-  }
-}
-
-class _StarRow extends StatefulWidget {
-  const _StarRow();
-  @override
-  State<_StarRow> createState() => _StarRowState();
-}
-
-class _StarRowState extends State<_StarRow> {
-  int _rating = 0;
-  static const _labels = ['BAD', 'OK', 'GOOD', 'GREAT', 'WOW'];
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        for (var i = 0; i < 5; i++)
-          GestureDetector(
-            onTap: () => setState(() => _rating = i + 1),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-              child: Column(
-                children: [
-                  Icon(Icons.star,
-                      size: AppLayout.starSize,
-                      color: i < _rating
-                          ? AppColors.accent
-                          : AppColors.textDisabled),
-                  Text(_labels[i], style: AppTextStyles.microCaps),
-                ],
+  Widget _whereTile(String label, String? iconUrl, IconData? glyph, bool red,
+      {required bool selected, required VoidCallback onTap}) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: GestureDetector(
+        onTap: onTap,
+        child: SizedBox(
+          width: AppLayout.providerSquare + 8,
+          child: Column(
+            children: [
+              Container(
+                width: AppLayout.providerSquare,
+                height: AppLayout.providerSquare,
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  border: selected ? Border.all(color: AppColors.accent, width: 2) : null,
+                ),
+                child: iconUrl != null
+                    ? Poster(imageAsset: iconUrl, label: label, radius: AppRadius.md)
+                    : Icon(glyph,
+                        color: red ? AppColors.unofficialRed : AppColors.textPrimary),
               ),
-            ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(label.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.microCaps),
+            ],
           ),
-      ],
+        ),
+      ),
     );
   }
 }

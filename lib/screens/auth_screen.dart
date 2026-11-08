@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../services/demo_seed.dart';
 import '../theme/tokens.dart';
+import '../widgets/password_rules.dart';
 import '../widgets/brand.dart';
 import '../widgets/common.dart';
 
@@ -183,6 +184,15 @@ class _AuthScreenState extends State<AuthScreen> {
                   obscure: true,
                   onSubmitted: (_) => _submit(),
                 ),
+                if (_register)
+                  Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.sm),
+                    child: PasswordRulesList(
+                      password: _password,
+                      email: () => _email.text,
+                      name: () => _name.text,
+                    ),
+                  ),
                 if (!_register &&
                     context.read<AuthController>().supportsPasswordReset)
                   Align(

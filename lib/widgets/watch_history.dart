@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -209,6 +212,14 @@ class _OverscrollRevealState extends State<OverscrollReveal> {
   double _clampPull = 0;
   bool _armed = false;
   bool _fired = false;
+  bool _atTop = true;
+  Timer? _wheelReset;
+
+  @override
+  void dispose() {
+    _wheelReset?.cancel();
+    super.dispose();
+  }
 
   void _reset() {
     _clampPull = 0;
@@ -236,6 +247,7 @@ class _OverscrollRevealState extends State<OverscrollReveal> {
       onNotification: (n) {
         // Only the list itself, never a nested horizontal rail.
         if (n.depth != 0) return false;
+        _atTop = n.metrics.pixels <= n.metrics.minScrollExtent;
 
         if (n is ScrollStartNotification || n is ScrollEndNotification) {
           _reset();
@@ -259,7 +271,20 @@ class _OverscrollRevealState extends State<OverscrollReveal> {
         _consider(pull, trigger);
         return false;
       },
-      child: widget.child,
+      // A mouse wheel can't move a list past its top, so wheel-up while
+      // already at the top counts as pulling.
+      child: Listener(
+        onPointerSignal: (e) {
+          if (e is! PointerScrollEvent || e.scrollDelta.dy >= 0 || !_atTop) {
+            return;
+          }
+          _wheelReset?.cancel();
+          _wheelReset = Timer(const Duration(milliseconds: 400), _reset);
+          _clampPull += -e.scrollDelta.dy;
+          _consider(_clampPull, trigger);
+        },
+        child: widget.child,
+      ),
     );
   }
 }

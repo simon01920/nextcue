@@ -238,6 +238,19 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Deletes everything stored for [uid], in the cloud and on this device
+  /// (account deletion). Pending edits are dropped, not uploaded.
+  Future<void> eraseAccount(String uid) async {
+    _cloudTimer?.cancel();
+    _cloudDirty.clear();
+    _dirty.clear();
+    await cloud?.delete(uid);
+    final p = _prefs ?? await SharedPreferences.getInstance();
+    for (final k in p.getKeys().where((k) => k.startsWith('bingely.$uid.')).toList()) {
+      await p.remove(k);
+    }
+  }
+
   /// Sends queued edits now (e.g. before sign-out or when the app pauses).
   Future<void> syncNow() async {
     await _flush();
@@ -344,7 +357,7 @@ class AppState extends ChangeNotifier {
     _watchedAt.remove(episodeId);
   }
 
-  static const _watchKeys = ['watched', 'watchedAt', 'lastWatched'];
+  static const _watchKeys = ['watched', 'watchedAt', 'lastWatched', 'statuses'];
 
   void setThemeMode(ThemeMode m) =>
       _mutate(const ['themeMode'], () => _themeMode = m);
@@ -366,6 +379,9 @@ class AppState extends ChangeNotifier {
     _lastStampMs = stamp;
     _lastWatchedAt[_titleOf(episodeId)] = stamp;
     _watchedAt[episodeId] = stamp;
+    // Watching an episode puts the show on the list; an explicit status
+    // (plan to watch, stopped, completed) is the user's and stays.
+    _statuses.putIfAbsent(_titleOf(episodeId), () => TrackStatus.watching);
   }
 
   void toggleWatched(String episodeId) =>
@@ -462,6 +478,28 @@ class AppState extends ChangeNotifier {
             ? _reactions.remove(episodeId)
             : _reactions[episodeId] = emotion;
       });
+
+  // Title-level survey answers ---------------------------------------------
+  // Stored in the reactions map under '<titleId>#<question>' (episode ids
+  // contain ':' and never '#'), so they sync without a schema change.
+  String? answerOf(String titleId, String question) =>
+      _reactions['$titleId#$question'];
+  void setAnswer(String titleId, String question, String? value) =>
+      _mutate(const ['reactions'], () {
+        final k = '$titleId#$question';
+        value == null || value.isEmpty
+            ? _reactions.remove(k)
+            : _reactions[k] = value;
+      });
+
+  /// Multi-choice answer, kept as a comma-separated list.
+  Set<String> answersOf(String titleId, String question) =>
+      {...?answerOf(titleId, question)?.split(',').where((e) => e.isNotEmpty)};
+  void toggleAnswer(String titleId, String question, String option) {
+    final set = answersOf(titleId, question);
+    set.contains(option) ? set.remove(option) : set.add(option);
+    setAnswer(titleId, question, set.join(','));
+  }
 
   // Watched-on device / favorite character (per episode) -------------------
   String? deviceOf(String episodeId) => _devices[episodeId];

@@ -23,6 +23,7 @@ import 'screens/title_detail_screen.dart';
 import 'screens/episode_detail_screen.dart';
 import 'screens/comments_screen.dart';
 import 'screens/collection_screen.dart';
+import 'screens/verify_email_screen.dart';
 import 'models/models.dart';
 
 /// One route per recon sitemap entry, matching the source URL shapes.
@@ -44,7 +45,9 @@ GoRouter buildRouter(AuthController auth,
       }
       final onLogin = state.uri.path == '/login';
       if (!auth.loggedIn) return onLogin ? null : '/login';
-      if (onLogin) return '/shows/watchlist';
+      final onVerify = state.uri.path == '/verify-email';
+      if (auth.needsVerification) return onVerify ? null : '/verify-email';
+      if (onLogin || onVerify) return '/shows/watchlist';
       return null;
     },
     routes: [
@@ -119,6 +122,10 @@ GoRouter buildRouter(AuthController auth,
       GoRoute(
         path: '/stats',
         builder: (c, s) => const StatsScreen(),
+      ),
+      GoRoute(
+        path: '/verify-email',
+        builder: (c, s) => const VerifyEmailScreen(),
       ),
       GoRoute(
         path: '/collection',

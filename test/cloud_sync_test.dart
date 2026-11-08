@@ -7,6 +7,9 @@ import 'package:showtrack/state/app_state.dart';
 
 /// In-memory stand-in for Firestore: one merged map per uid.
 class FakeCloud implements CloudSync {
+  @override
+  Future<void> delete(String uid) async => docs.remove(uid);
+
   final Map<String, Map<String, Object?>> docs = {};
   int saves = 0;
   bool offline = false;
@@ -120,7 +123,7 @@ void main() {
     final auth = AuthController(LocalAuthService(), beforeLogout: () async {
       synced = true;
     });
-    await auth.register('a@b.co', 'secret1', 'A');
+    await auth.register('a@b.co', 'Tape4Rewind', 'A');
     await auth.logout();
     expect(synced, isTrue);
     expect(auth.loggedIn, isFalse);
@@ -131,5 +134,44 @@ void main() {
         'Incorrect email or password.');
     expect(friendlyFirebaseError('weird-code', 'Login'),
         'Login failed (weird-code).');
+  });
+
+  test('watching an episode adds the show; an explicit status stays', () async {
+    final s = AppState();
+    await s.bind('u1');
+    s.setWatched('series-1:1:1', true);
+    expect(s.statusOf('series-1'), TrackStatus.watching);
+    s.setStatus('series-2', TrackStatus.completed);
+    s.setManyWatched(['series-2:1:1', 'series-2:1:2'], true);
+    expect(s.statusOf('series-2'), TrackStatus.completed);
+  });
+
+  test('password policy, change password, and delete erases everything',
+      () async {
+    final cloud = FakeCloud();
+    final state = AppState(cloud: cloud, cloudDebounce: Duration.zero);
+    final auth = AuthController(LocalAuthService(), eraseData: state.eraseAccount);
+    expect(() => auth.register('jane@b.co', 'jane1234', 'Jane'),
+        throwsA(isA<AuthException>()));
+    await auth.register('jane@b.co', 'Tape4Rewind', 'Jane');
+    final uid = auth.account!.uid;
+    await state.bind(uid);
+    state.setWatched('series-9:1:1', true);
+    await state.syncNow();
+    expect(cloud.docs[uid], isNotNull);
+
+    expect(() => auth.changePassword('wrong', 'Vhs2Cassette'),
+        throwsA(isA<AuthException>()));
+    await auth.changePassword('Tape4Rewind', 'Vhs2Cassette');
+
+    await expectLater(auth.deleteAccount(password: 'Tape4Rewind'),
+        throwsA(isA<AuthException>()));
+    await auth.deleteAccount(password: 'Vhs2Cassette');
+    expect(auth.loggedIn, isFalse);
+    expect(cloud.docs[uid], isNull);
+    final p = await SharedPreferences.getInstance();
+    expect(p.getKeys().where((k) => k.startsWith('bingely.$uid.')), isEmpty);
+    expect(() => LocalAuthService().login('jane@b.co', 'Vhs2Cassette'),
+        throwsA(isA<AuthException>()));
   });
 }
